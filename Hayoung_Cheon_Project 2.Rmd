@@ -1,0 +1,402 @@
+---
+title: "Project2_EDA"
+author: "Hayoung Cheon"
+date: "2025-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# EDA
+## Load data
+
+```{r}
+bank <- read.csv("C:/Users/oyunm/Downloads/bank+marketing/bank/bank-full.csv")
+head(bank)
+```
+## boxplot
+## contigency table
+## hitogram
+
+## Split data into training and validate data set
+```{r}
+set.seed(1234)
+index <- sample(1:nrow(bank), replace=F)
+train_size <- floor(0.7 * nrow(bank))
+
+train <- bank[index[1:train_size], ]
+test <- bank[index[(train_size + 1):nrow(bank)], ]
+
+```
+
+## Summary stat
+```{r}
+summary(bank)
+```
+
+# outlier?
+Outlier in previous data
+```{r}
+library(tidyverse)
+max(bank$previous) #275
+bank <- bank %>% filter(previous <= 270)
+
+```
+
+# Variable
+```{r}
+#Numerical Variables
+num.var <- c("age", "balance","day", "duration", "campaign", "pdays", "previous")
+
+#Categorical Variables
+bi.categ.var <- c("housing", "loan", "default")
+
+multi.categ.var <- c("job", "marital", "education", "contact", "month", "poutcome")
+
+```
+
+## Key questions
+1. Is some variable is a factor of y after accounting for other variables status?  
+2. Do any of the factors interact with one another?(Confounding var)  
+3. How well can these predictors potentially make a classification/ what are the key factors that contributed to a term deposit.  
+
+
+## EDA: numerical variables 
+```{r}
+library(ggplot2)
+
+# Loess curve
+
+# encode y into yes=> 1, no => 0
+bank$y.num <- ifelse(bank$y=="yes", 1, 0)
+
+table(bank$y)
+
+# Loop over numeric variables to plot logistic regression curves
+for (var in num.var) {
+  p <- ggplot(bank, aes_string(x = var, y = "y.num")) +
+    geom_point(alpha = 0.3) +
+    geom_smooth(
+      method = "glm",
+      method.args = list(family = "binomial"),
+      formula = y ~ x,
+      size = 1
+    ) +
+    ggtitle(paste("Logistic Regression Fit:", var, "vs y.num"))
+  print(p)
+}
+
+
+#bank$y.num <- as.numeric(bank$y.num)
+
+#for (var in num.var) {
+#  p <- ggplot(bank, aes_string(x = var, y = "y.num")) +
+#    geom_point(alpha = 0.4) +
+#    geom_smooth(method = "loess", size = 1) +
+#    ggtitle(paste("LOESS Curve:", var, "vs y.num"))
+#  print(p)
+#}
+
+
+#ggplot(bank, aes(x = duration, y = y.num)) +
+# geom_jitter(height = 0.05, alpha = 0.3) +  # jitter helps reveal density in binary data
+#  geom_smooth(method = "loess", formula = y ~ x, span = 2.0, size = 1) +
+#  ylim(-0.2, 1.2) +
+#  labs(title = "LOESS Curve (Binary y): duration vs y.num")
+
+
+
+```
+**INTERPRETATION**
+Increase  
+- balance
+- duration
+- pdays
+- previous
+- age
+
+Decrease
+- campaign
+
+## EDA: categorical variable: binary
+```{r}
+library(ISLR)
+library(epitools)
+library(dplyr)
+library(tidyverse)
+
+# contigency table
+# Ensure y is a factor
+bank$y <- as.factor(bank$y)
+
+# Loop over each binary categorical variable to print contingency tables
+for (var in bi.categ.var) {
+  cat("\nContingency Table: ", var, " vs y\n")
+  print(table(bank[[var]], bank$y))
+}
+
+# default
+mytab <- table(bank$default, bank$y)
+mytab
+# mosaic style plots
+plot(y~default, data=bank, col=c("black","skyblue"))
+
+ggplot(bank,aes(x=default, fill=y))+geom_bar(position="fill")
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(default, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[3:4,], aes(x=default, y=freq, colour=default)) +
+  geom_bar(aes(fill=default), stat = "identity") +
+  ylab("Proportion of y") 
+
+epitab(mytab, method="oddsratio", oddsratio="wald", pvalue="chi2", rev="columns")
+
+
+# housing
+mytab <- table(bank$housing, bank$y)
+mytab
+# mosaic style plots
+plot(y~housing, data=bank, col=c("black","skyblue"))
+
+ggplot(bank,aes(x=housing, fill=y))+geom_bar(position="fill")
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(housing, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[3:4,], aes(x=housing, y=freq, colour=housing)) +
+  geom_bar(aes(fill=housing), stat = "identity") +
+  ylab("Proportion of y") 
+
+epitab(mytab, method="oddsratio", oddsratio="wald", pvalue="chi2", rev="columns")
+
+#loan
+mytab <- table(bank$loan, bank$y)
+mytab
+# mosaic style plots
+plot(y~loan, data=bank, col=c("black","skyblue"))
+
+ggplot(bank,aes(x=loan, fill=y))+geom_bar(position="fill")
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(loan, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[3:4,], aes(x=loan, y=freq, colour=loan)) +
+  geom_bar(aes(fill=loan), stat = "identity") +
+  ylab("Proportion of y") 
+
+epitab(mytab, method="oddsratio", oddsratio="wald", pvalue="chi2", rev="columns")
+```
+
+**INTERPRETATION**
+For all binary categorical variables, the "no" has a high proportion of yes of y. Which means when they don't have house loan, personal loan or don't have a credit in defualt, the odds of yes to term of deposit is higher than when they have house loan, peronal loan.  
+
+Odd Ratio
+- loan ; 2.02 times
+- housing: 2.40 times
+- default: 1.96 times
+
+
+## EDA: Categorical vaiables: multi level. 
+```{r}
+multi.categ.var <- c("job", "marital", "education", "contact", "month", "poutcome")
+
+# Convert each variable in multi.categ.var to factor
+bank[multi.categ.var] <- lapply(bank[multi.categ.var], as.factor)
+
+# Optional: verify conversion
+str(bank[multi.categ.var])
+
+
+#job
+mytab <- table(bank$job, bank$y)
+mytab
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(job, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[13:24,], aes(x=job, y=freq, colour=job)) +
+  geom_bar(aes(fill=job), stat = "identity") +
+  ylab("Proportion of y") 
+
+#marital
+mytab <- table(bank$marital, bank$y)
+mytab
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(marital, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[4:6,], aes(x=marital, y=freq, colour=marital)) +
+  geom_bar(aes(fill=marital), stat = "identity") +
+  ylab("Proportion of y") 
+
+
+#education
+mytab <- table(bank$education, bank$y)
+mytab
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(education, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[5:8,], aes(x=education, y=freq, colour=education)) +
+  geom_bar(aes(fill=education), stat = "identity") +
+  ylab("Proportion of y") 
+
+
+
+#contact
+mytab <- table(bank$contact, bank$y)
+mytab
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(contact, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[4:6,], aes(x=contact, y=freq, colour=contact)) +
+  geom_bar(aes(fill=contact), stat = "identity") +
+  ylab("Proportion of y") 
+
+#month
+mytab <- table(bank$month, bank$y)
+mytab
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(month, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[13:24,], aes(x=month, y=freq, colour=month)) +
+  geom_bar(aes(fill=month), stat = "identity") +
+  ylab("Proportion of y") 
+
+#poutcome
+mytab <- table(bank$poutcome, bank$y)
+mytab
+
+# Just to plot what we care about
+g <- bank %>%
+  group_by(poutcome, y) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>%
+  arrange(desc(freq))
+
+g
+
+ggplot(g[5:8,], aes(x=poutcome, y=freq, colour=poutcome)) +
+  geom_bar(aes(fill=poutcome), stat = "identity") +
+  ylab("Proportion of y") 
+```
+
+## correlation Matrix
+```{r}
+library(GGally)
+
+# ggpairs with color
+ggpairs(
+  bank,
+  columns = c("y.num", "age", "balance", "day", "duration", "campaign", "pdays", "previous"),
+  mapping = aes(color = y)
+)
+```
+
+## Boundaries classification(Interaction or polynomial or additive)
+```{r}
+```
+
+
+# Objective 1: build a logistic regression model for interpretaion purposes using the training data
+
+
+```{r}
+# base
+baselogistic <- glm(y~age+balance+day+duration+campaign+pdays+previous+job+marital+education+contact+month+poutcome+housing+loan+default, data=train, family = "binomial")
+summary(baselogistic)
+
+
+```
+**Interpretation**
+Age, pdays, previous and default has large p-values. AIC is 2648. Take those out.
+
+```{r}
+# Take out large p-value
+logistic1 <- glm(y~balance+day+duration+campaign+job+marital+education+contact+month+poutcome+housing+loan, data=train, family = "binomial")
+summary(logistic1)
+
+# Adding logs
+logistic2 <- glm(y~balance+day+duration+campaign+job+marital+education+contact+month+poutcome+housing+loan, data=train, family = "binomial")
+summary(logistic2)
+
+```
+
+
+# Do we have to do something with unknown data?
+
+## Interaction terms
+```{r}
+
+# balance
+ggplot(bank,aes(x=balance, y=y.num, colour=housing)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~housing)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=marital)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~marital)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=job)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~job)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=education)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~education)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=loan)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~loan)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=default)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~default)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=contact)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~contact)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=month)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~month)+ ylim(-.2,1.2)
+
+ggplot(bank,aes(x=balance, y=y.num, colour=poutcome)) +geom_point() + geom_smooth(method="loess", size=1, span=1.5) +facet_wrap(~poutcome)+ ylim(-.2,1.2)
+```
