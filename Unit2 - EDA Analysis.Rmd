@@ -1,0 +1,186 @@
+---
+title: "Unit2 - EDA Analysis"
+author: "Hayoung Cheon"
+date: "2025-04-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jtools)
+library(sjPlot)
+library(ResourceSelection)
+library(dplyr)
+library(ggplot2)
+
+
+cad<-read.csv("C:/Users/oyunm/Downloads/coronary (2).csv",stringsAsFactors = T)
+Rose<-read.csv("C:/Users/oyunm/Downloads/titanic.csv",stringsAsFactors = T)
+
+View(cad)
+
+#EDA for Coronary Artery Disease
+#always good to get a feel for prevalence (if a random sample)
+
+
+g<-cad %>% 
+  group_by(CAD) %>%
+    summarise(cnt=n()) %>%
+    mutate(perc=round(cnt/sum(cnt),4))
+g
+
+ggplot(g,aes(x=CAD,y=perc,colour=CAD))+
+  geom_bar(aes(fill=CAD),show.legend=F,stat="identity")+
+  ylab("Proportion of Disease")
+
+
+#Checking out ECG
+g2<-cad %>% 
+  group_by(ECG,CAD) %>%
+  summarise(cnt=n()) %>%
+  mutate(perc=round(cnt/sum(cnt),4))%>%
+  arrange(desc(perc))
+g2
+
+ggplot(g2[c(1,3,5),],aes(x=reorder(ECG,-perc),y=perc,colour=ECG))+
+  geom_bar(aes(fill=ECG),show.legend=T,stat="identity")+
+  ylab("Proportion of Disease ")+
+  xlab("ECG")
+
+
+#Rinse and repeat for sex
+
+g3<-cad %>% 
+  group_by(Sex,CAD) %>%
+  summarise(cnt=n()) %>%
+  mutate(perc=round(cnt/sum(cnt),4))
+g3
+
+ggplot(g3[c(2,4),],aes(x=reorder(Sex,-perc),y=perc,colour=Sex))+
+  geom_bar(aes(fill=Sex),show.legend=T,stat="identity")+
+  ylab("Proportion of Disease ")+
+  xlab("Sex")
+
+
+#Loess plot for Age
+#Lets code up a 0,1 version of CAD first
+cad$CAD.num<-ifelse(cad$CAD=="Yes",1,0)
+View(cad)
+
+
+ggplot(cad,aes(x=AGE,y=CAD.num))+geom_point()+
+  geom_smooth(method="loess",size=1)+
+  ylim(-.2,1.2)
+
+#Smoother might be a little sensitive in smaller data sets
+ggplot(cad,aes(x=AGE,y=CAD.num))+geom_point()+
+  geom_smooth(method="loess",size=1,span=1.25)+
+  ylim(-.2,1.2)
+
+
+#Interaction investigation
+
+g4<-cad %>% 
+  group_by(Sex,ECG,CAD) %>%
+  summarise(cnt=n()) %>%
+  mutate(perc=round(cnt/sum(cnt),4))
+g4
+
+ggplot(g4[2*1:6,],aes(x=ECG,y=perc,colour=Sex))+
+  geom_bar(aes(fill=Sex),position="dodge",show.legend=T,stat="identity")+
+  ylab("Proportion of Disease ")+
+  xlab("ECG")
+
+
+
+#Loess plot of Age by Sex
+ggplot(cad,aes(x=AGE,y=CAD.num,colour=Sex))+geom_point()+
+  geom_smooth(method="loess",size=1,span=1.5)+
+  ylim(-.2,1.2)
+
+#Seperating graphs
+ggplot(cad,aes(x=AGE,y=CAD.num,colour=Sex))+geom_point()+
+  geom_smooth(method="loess",size=1,span=1.5)+
+  ylim(-.2,1.2)+
+  facet_wrap(~Sex)
+
+
+#Loess Age by ECG
+ggplot(cad,aes(x=AGE,y=CAD.num,colour=ECG))+geom_point()+
+  geom_smooth(method="loess",size=1,span=1.5)+
+  ylim(-.2,1.2)+
+  facet_wrap(~ECG)
+
+
+#Summary of EDA
+#All 3 look like they could contribute to a good model fit
+#Older you get the higher chances of CAD
+#Males have higher chances of CAD
+#Folks with high ECG scores have higher chances of CAD
+#
+#Possible interactions may exist but sample size is very small
+#when stratifying.  
+
+
+
+
+#Titanic data set
+#Wont go through everything.  Just highlight some interesting
+#things
+names(Rose)
+View(Rose)
+
+  
+h2 <- Rose %>%
+  group_by(Sex,Survived) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 4)) %>% 
+  arrange(desc(freq)) 
+
+h2
+
+
+
+ggplot(h2[c(2,4),],aes(x=Sex,y=freq,colour=Sex))+
+  geom_bar(aes(fill=Sex),show.legend=F,stat="identity")+
+  ylab("Proportion Survived")
+
+
+#Fare effect
+ggplot(Rose,aes(x=Fare,y=Survived))+geom_point()+
+  geom_smooth(method="loess",size=1,span=.75)+
+  ylim(-.2,1.2)+
+  facet_wrap(~Sex)
+
+#Age effect
+ggplot(Rose,aes(x=Age,y=Survived))+geom_point()+
+  geom_smooth(method="loess",size=1,span=.75)+
+  ylim(-.2,1.2)
+
+#Age by Sex
+ggplot(Rose,aes(x=Age,y=Survived,colour=Sex))+geom_point()+
+  geom_smooth(method="loess",size=1,span=.75)+
+  ylim(-.2,1.2)
+
+#Age by class
+ggplot(Rose,aes(x=Age,y=Survived,colour=factor(Pclass)))+geom_point()+
+  geom_smooth(method="loess",size=1,span=.75)+
+  ylim(-.2,1.2)+
+  facet_wrap(~factor(Pclass))
+
+#Age by class and sex
+ggplot(Rose,aes(x=Age,y=Survived,colour=factor(Pclass)))+geom_point()+
+  geom_smooth(method="loess",size=1,span=1.25)+
+  ylim(-.2,1.2)+
+  facet_wrap(~Sex)
+
+
+#With multipe numeric variables, scatterplots could be helpful 
+ggplot(Rose,aes(x=Age,y=Fare,colour=Survived))+geom_point()
+ggplot(Rose,aes(x=Age,y=log(Fare),colour=Survived))+geom_point()
+ggplot(Rose,aes(x=Age,y=Fare,colour=Survived))+geom_point(size=.5)+facet_wrap(~Sex)
+
+```
