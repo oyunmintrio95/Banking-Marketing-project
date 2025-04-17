@@ -1,7 +1,9 @@
 ---
 title: "Bank Marketing - Subscription"
 author: "Miguel Zavala"
-output: html_document
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r, final-setup, include=FALSE}
@@ -82,7 +84,7 @@ data_summary <- data.frame(
   Value = c(num_rows, num_cols, num_cols, "subscribed")
 )
 
-print(data_summary)
+data_summary
 ```
 
 ### Summary Statistics
@@ -200,7 +202,8 @@ ggplot(cor_df, aes(x = reorder(variable, correlation), y = correlation)) +
   coord_flip() +
   labs(title = "Correlation with Subscribed", x = "Variable", y = "Correlation")
 ```
-### PCA 
+
+### PCA
 
 ```{r, final-pca}
 for_pca <- bank
@@ -228,7 +231,7 @@ top_combined <- data.frame(
   PC2_Loading = round(top_pc2$PC2, 3)
 )
 
-print(top_combined)
+top_combined
 ```
 
 <div>
@@ -258,7 +261,7 @@ pc_table <- data.frame(
   "Cumulative Variance" = round(cum_var, 4)
 )
 
-print(pc_table)
+pc_table
 ```
 
 
@@ -309,8 +312,6 @@ tidy(all_num_additive, conf.int = TRUE) |>
 #### Look for signals in categorical
 
 Modeling with all categoricals might tell some story
-
-#### Model Categorical with GLM
 
 ```{r, final-glm-all-cat}
 bank_cat <- bank
