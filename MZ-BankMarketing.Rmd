@@ -39,7 +39,7 @@ lapply(required_packages, library, character.only = TRUE)
 
 ```{r defaults, include=FALSE}
 #' Global palette and theme
-base_palette <- brewer.pal(n = 8, name = "Dark2")
+base_palette <- brewer.pal(n = 12, name = "Dark2")
 scale_fill_discrete <- function(...) scale_fill_manual(values = base_palette, ...)
 scale_color_discrete <- function(...) scale_color_manual(values = base_palette, ...)
 ```
@@ -157,7 +157,7 @@ plt_categorical <- lapply(seq_along(categorical_vars_plt), function(i) {
   ggplot(bank, aes_string(x = categorical_vars_plt[i], fill = "subscribed")) +
     geom_bar(position = "fill") +
     scale_y_continuous(labels = scales::percent) +
-    scale_fill_discrete() +
+    scale_color_discrete() +
     labs(title = paste("Subscription Rate by", categorical_vars_plt[i]),
          y = "Proportion", x = NULL) +
     coord_flip() +
@@ -171,7 +171,7 @@ wrap_plots(plt_categorical, ncol = 3, guides = "collect") &  theme(legend.positi
 plt_num <- lapply(numeric_vars, function(var) {
   ggplot(bank, aes_string(x = "subscribed", y = var, fill = "subscribed")) +
     geom_boxplot(alpha = 0.7) +
-    scale_fill_discrete() +
+    scale_color_discrete() +
     labs(title = paste("Dist. of", var, "by Subscribed"), y = var, x = NULL)
 })
 
@@ -204,7 +204,7 @@ top_influential_df <- data.frame(
   slice(1:N)
 
 ggplot(top_influential_df, aes(x = reorder(as.factor(index), -cooks_distance), y = cooks_distance)) +
-  geom_col(fill = "steelblue") +
+  geom_col(fill = base_palette[3]) +
   geom_text(aes(label = round(cooks_distance, 4)), vjust = -0.5, size = 3.5) +
   labs(
     title = paste("Top", N, "Influential Points (Cook's Distance)"),
@@ -242,7 +242,7 @@ cor_df <- data.frame(
 )
 
 ggplot(cor_df, aes(x = reorder(variable, correlation), y = correlation)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_bar(stat = "identity", fill = base_palette[3]) +
   coord_flip() +
   labs(title = "Correlation with Subscribed", x = "Variable", y = "Correlation")
 ```
@@ -317,7 +317,7 @@ plot_ly(
   data = pca_scores,
   x = ~PC1, y = ~PC2, z = ~PC3,
   color = ~subscribed,
-  colors = c("red", "deepskyblue"),
+  colors = c(base_palette[3], "skyblue"),
   type = "scatter3d",
   mode = "markers"
 )
@@ -511,9 +511,9 @@ metrics_df <- purrr::map_dfr(thresholds, function(thresh) {
 })
 
 ggplot(metrics_df, aes(x = threshold)) +
-  geom_line(aes(y = f1), color = "blue") +
-  geom_line(aes(y = precision), color = "green") +
-  geom_line(aes(y = recall), color = "red") +
+  geom_line(aes(y = f1), color = base_palette[1]) +
+  geom_line(aes(y = precision), color = base_palette[2]) +
+  geom_line(aes(y = recall), color = base_palette[3]) +
   labs(title = "Threshold Tuning", y = "Metric", x = "Threshold")
 ```
 
@@ -628,7 +628,7 @@ plt_dur_ct <- ggplot(inter_data, aes(y = subscribed, x = duration, colour = cont
 
 plt_job <- ggplot(iner_job_data, aes(x = education, y = job, fill = subscribe_rate)) +
   geom_tile(color = "white") +
-  scale_fill_gradient(low = "white", high = "steelblue", name = "Subscription Rate") +
+  scale_fill_gradient(low = "white", high = base_palette[3], name = "Subscription Rate") +
   labs(
     title = "Subscription Rate by Job × Education",
     x = "Education Level", y = "Job"
