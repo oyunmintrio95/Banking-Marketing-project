@@ -24,9 +24,9 @@ knitr::opts_chunk$set(
 
 ```{r, final-install-packages, include=FALSE}
 required_packages <- c(
-  "ggplot2", "tidyverse", "corrplot", "visdat", "GGally", "car",
+  "ggplot2", "tidyverse", "corrplot", "visdat", "GGally", "car", "reshape2", "MASS",
   "ggcorrplot", "glmnet", "caret", "RColorBrewer", "plotly", "broom", "yardstick",
-  "dplyr", "grid", "gridExtra", "DT", "tidyr", "patchwork", "ggfortify", "factoextra"
+  "dplyr", "grid", "gridExtra", "DT", "tidyr", "patchwork", "ggfortify", "factoextra", "pROC"
 )
 
 missing_packages <- required_packages[!(required_packages %in% installed.packages()[, "Package"])]
@@ -36,7 +36,6 @@ if (length(missing_packages) > 0) {
 
 lapply(required_packages, library, character.only = TRUE)
 ```
-
 
 ```{r defaults, include=FALSE}
 #' Global palette and theme
@@ -60,7 +59,6 @@ Goal for the project is to Predict whether a client will subscribe (yes / no) to
 
 The dataset is structured and suitable for models like Logistic Regression, LDA, QDA, KNN, Random Forest, and others.
 
-
 ## Objectives
 
 -   Build and interpret a logistic regression model without interaction terms.
@@ -75,7 +73,6 @@ The dataset is structured and suitable for models like Logistic Regression, LDA,
 data <- read.csv("./bank-full.csv", header = TRUE, sep = ";", stringsAsFactors = TRUE)
 
 bank <- data |> rename(subscribed = y)
-
 num_rows <- nrow(bank)
 num_cols <- ncol(bank) - 1
 
@@ -106,6 +103,7 @@ colSums(is.na(bank))
 ```
 
 ### Separating Numerical vs Categorical
+
 ```{r, final-data-variables}
 numeric_vars <- names(bank)[sapply(bank, is.numeric)]
 categorical_vars <- names(bank)[sapply(bank, function(x) is.factor(x) || is.character(x))]
@@ -136,6 +134,9 @@ vis_miss(bank) +
   )
 ```
 
+
+### Find some relationships
+
 ```{r, final-eda-sub-rate}
 plt_subscribed <- bank |>
   group_by(subscribed) |>
@@ -148,7 +149,6 @@ plt_prop <- ggplot(plt_subscribed, aes(x = subscribed, y = perc, colour = subscr
 
 grid.arrange(grobs = list(tableGrob(plt_subscribed), plt_prop), ncol = 1)
 ```
-
 
 ```{r, final-eda-cat-rate-sub, out.width="100%"}
 categorical_vars_plt <- categorical_vars[categorical_vars != "subscribed"]
@@ -167,7 +167,6 @@ plt_categorical <- lapply(seq_along(categorical_vars_plt), function(i) {
 wrap_plots(plt_categorical, ncol = 3, guides = "collect") &  theme(legend.position = "bottom")
 ```
 
-
 ```{r, final-eda-num-rate-sub, out.width="100%"}
 plt_num <- lapply(numeric_vars, function(var) {
   ggplot(bank, aes_string(x = "subscribed", y = var, fill = "subscribed")) +
@@ -179,8 +178,53 @@ plt_num <- lapply(numeric_vars, function(var) {
 wrap_plots(plt_num, ncol = 3) & theme(legend.position = "none")
 ```
 
+### Outlier assesment
+
+```{r, final-eda-num-outliers, out.width="100%"}
+for_outliers <- bank
+for_outliers$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
+model <- lm(subscribed ~ previous, data = for_outliers)
+influencePlot(model, id.method = "identify", 
+              main = "Influence Plot: Cook's D vs Leverage",
+              sub = "Size of circle = Cook's distance")
+```
+
+#### Plot the most influential
+
+```{r, final-eda-num-outliers-most, out.width="100%"}
+cooks_d <- cooks.distance(model)
+N <- 5
+top_influential_df <- data.frame(
+  index = 1:length(cooks_d),
+  cooks_distance = cooks_d,
+  previous = bank$previous,
+  subscribed = bank$subscribed
+) |>
+  arrange(desc(cooks_distance)) |>
+  slice(1:N)
+
+ggplot(top_influential_df, aes(x = reorder(as.factor(index), -cooks_distance), y = cooks_distance)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = round(cooks_distance, 4)), vjust = -0.5, size = 3.5) +
+  labs(
+    title = paste("Top", N, "Influential Points (Cook's Distance)"),
+    x = "Observation Index",
+    y = "Cook's Distance"
+  )
+```
+
+<div>
+Observation 29183 has extremely high leverage and Cook’s Distance (~44.3), making it a highly influential point in the model.
+</div>
+
+#### Remove Observation
+
+```{r, final-remove-outliers}
+bank <- bank[-29183, ]
+```
 
 ### Correlation
+
 ```{r, final-correlation}
 for_corr <- bank
 for_corr$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
@@ -235,12 +279,13 @@ top_combined
 ```
 
 <div>
+
 Principal Component Analysis (PCA) on the numeric variables revealed that pdays and previous contributed most to the first principal component (PC1), capturing variability related to past campaign exposure. The second component (PC2) was primarily influenced by campaign, day, and negatively by duration, reflecting variation in campaign intensity and contact timing.
 
 We can interpret the components as:
 
-- PC1: Differences in past contact history, primarily driven by pdays and previous.
-- PC2: Differences in campaign intensity and call timing, shaped by campaign, day, and negatively by duration.
+-   PC1: Differences in past contact history, primarily driven by pdays and previous.
+-   PC2: Differences in campaign intensity and call timing, shaped by campaign, day, and negatively by duration.
 
 </div>
 
@@ -264,7 +309,6 @@ pc_table <- data.frame(
 pc_table
 ```
 
-
 ```{r, final-pca-scores}
 pca_scores <- as.data.frame(pca$x)
 pca_scores$subscribed <- bank$subscribed
@@ -280,8 +324,13 @@ plot_ly(
 ```
 
 <div>
+
 It appears that we're missing a significant portion of the variance by focusing only on the numeric variables. PC1 and PC2 explain the most variation among these, but even after adding PC3, we don’t observe meaningful separation between subscription outcomes. This suggests that additional structure — possibly critical for understanding or predicting subscribed — may lie in the categorical variables, which were not included in this PCA.
+
 </div>
+
+
+## Logistic Regression
 
 ### Run GLM in each predictor
 
@@ -307,7 +356,6 @@ tidy(all_num_additive, conf.int = TRUE) |>
   labs(title = "Logistic Regression Coefficients",
        y = "Estimate (log-odds)", x = "Variable")
 ```
-
 
 #### Look for signals in categorical
 
@@ -351,27 +399,30 @@ odds_ratios
 ```
 
 <div>
+
 We can see from the categorical only variables that:
 
 -   Month of contact has a strong influence: campaigns conducted in March, October, and September significantly increased subscription odds, while those in January and August showed markedly lower performance.
 -   Job type and education level also shape likelihood: customers who are retired or students, and those with tertiary education, are notably more likely to subscribe.
 -   Additionally, having an existing loan appears to negatively impact subscription odds, suggesting financial burden may reduce campaign receptiveness.
+
 </div>
 
-| Variable   | Visual Pattern? | Clear % Difference?        | Keep?                     |
-|------------|------------------|-----------------------------|----------------------------|
-| contact    | yes              | yes (cellular > unknown)    | yes                        |
-| loan       | yes              | yes (loan = less likely)    | yes                        |
-| housing    | yes              | yes (housing = likely)      | yes                        |
-| default    | maybe            | some                        | maybe                      |
-| education  | yes              | yes (tertiary increases)    | yes                        |
-| poutcome   | strong           | yes (success = very high)   | yes                        |
-| marital    | maybe            | some separation             | maybe                      |
-| job        | mixed            | a few clear signals         | maybe (group rare levels)  |
-
+| Variable | Visual Pattern? | Clear % Difference? | Keep? |
+|-----------------|-----------------|--------------------|-------------------|
+| contact | yes | yes (cellular \> unknown) | yes |
+| loan | yes | yes (loan = less likely) | yes |
+| housing | yes | yes (housing = likely) | yes |
+| default | maybe | some | maybe |
+| education | yes | yes (tertiary increases) | yes |
+| poutcome | strong | yes (success = very high) | yes |
+| marital | maybe | some separation | maybe |
+| job | mixed | a few clear signals | maybe (group rare levels) |
 
 <div>
+
 Carefully look at poutcome as we do not know what drives from previous mkt approach, and if the customer is showing an affinity to long term deposit, maybe is increasing the current deposit. Default sounds like a good story, I tried swapping ref with not much difference.
+
 </div>
 
 ### Feature Selection (By EDA)
@@ -380,21 +431,20 @@ We are having very conflicting results based on the multiple explorations on num
 
 We think that cyclical encoding for month as we see some patterns on specific months could help the model to explain better as seasonality seems to have some effect.
 
-| Variable      | Type        | Reason for Inclusion                                                                 |
-|---------------|-------------|----------------------------------------------------------------------------------------|
-| duration      | Numerical   | Strongest univariate predictor; higher durations consistently increase subscription odds |
-| pdays         | Numerical   | Captures time since last contact; reflects engagement recency                         |
-| previous      | Numerical   | Reflects past campaign success; useful but may be redundant with pdays/campaign       |
-| balance       | Numerical   | Indicates client financial status; moderate predictive signal                         |
-| campaign      | Numerical   | Current campaign intensity; negative association suggests fatigue with repeated contact |
-| month_sin     | Numerical   | Cyclical encoding of month (seasonality); preserves circular month structure          |
-| month_cos     | Numerical   | Complement to month_sin; together capture monthly cyclic patterns                     |
-| contact       | Categorical | Clear visual and statistical difference; contact method affects likelihood to subscribe |
-| loan          | Categorical | Customers with loans are less likely to subscribe; simple and interpretable           |
-| education     | Categorical | Higher education levels (tertiary) correlate with higher subscription odds            |
-| marital       | Categorical | Some variation observed; potentially useful with clear reference level                |
-| job           | Categorical | Certain job roles (retired, student) show increased subscription; use with level grouping |
-
+| Variable | Type | Reason for Inclusion |
+|---------------|---------------|------------------------------------------|
+| duration | Numerical | Strongest univariate predictor; higher durations consistently increase subscription odds |
+| pdays | Numerical | Captures time since last contact; reflects engagement recency |
+| previous | Numerical | Reflects past campaign success; useful but may be redundant with pdays/campaign |
+| balance | Numerical | Indicates client financial status; moderate predictive signal |
+| campaign | Numerical | Current campaign intensity; negative association suggests fatigue with repeated contact |
+| month_sin | Numerical | Cyclical encoding of month (seasonality); preserves circular month structure |
+| month_cos | Numerical | Complement to month_sin; together capture monthly cyclic patterns |
+| contact | Categorical | Clear visual and statistical difference; contact method affects likelihood to subscribe |
+| loan | Categorical | Customers with loans are less likely to subscribe; simple and interpretable |
+| education | Categorical | Higher education levels (tertiary) correlate with higher subscription odds |
+| marital | Categorical | Some variation observed; potentially useful with clear reference level |
+| job | Categorical | Certain job roles (retired, student) show increased subscription; use with level grouping |
 
 ### Prepare model
 
@@ -428,20 +478,20 @@ cat_feat <- c("contact", "loan", "education", "marital", "job", "day", "previous
 features <- c(num_feat, cat_feat)
 candidate_model <- as.formula(paste("subscribed ~", paste(features, collapse = " + ")))
 
-candidate_fit <- glm(candidate_model, data = train_data, family = binomial)
-summary(candidate_fit)
 ```
+
+### GLM 
 
 ```{r, final-glm-candidate-pred}
 threshold <- 0.25
-pred <- predict(candidate_fit, newdata = test_data, type = "response")
+candidate_fit <- glm(candidate_model, data = train_data, family = binomial)
+glm_pred <- predict(candidate_fit, newdata = test_data, type = "response")
 
 model_levels <- levels(candidate_data$subscribed)
+pred_class <- factor(ifelse(glm_pred > threshold, "yes", "no"), levels = model_levels)
+glm_actual <- factor(test_data$subscribed, levels = model_levels)
 
-pred_class <- factor(ifelse(pred > threshold, "yes", "no"), levels = model_levels)
-actual <- factor(test_data$subscribed, levels = model_levels)
-
-confusionMatrix(pred_class, actual, positive = "yes")
+confusionMatrix(pred_class, glm_actual, positive = "yes")
 ```
 
 #### Tune thresholds
@@ -450,13 +500,13 @@ confusionMatrix(pred_class, actual, positive = "yes")
 thresholds <- seq(0.1, 0.9, by = 0.01)
 
 metrics_df <- purrr::map_dfr(thresholds, function(thresh) {
-  pred_class <- factor(ifelse(pred > thresh, "yes", "no"), levels = c("no", "yes"))
+  pred_class <- factor(ifelse(glm_pred > thresh, "yes", "no"), levels = c("no", "yes"))
   
   tibble(
     threshold = thresh,
-    precision = yardstick::precision_vec(truth = actual, estimate = pred_class, event_level = "second"),
-    recall = yardstick::recall_vec(truth = actual, estimate = pred_class, event_level = "second"),
-    f1 = yardstick::f_meas_vec(truth = actual, estimate = pred_class, event_level = "second")
+    precision = yardstick::precision_vec(truth = glm_actual, estimate = pred_class, event_level = "second"),
+    recall = yardstick::recall_vec(truth = glm_actual, estimate = pred_class, event_level = "second"),
+    f1 = yardstick::f_meas_vec(truth = glm_actual, estimate = pred_class, event_level = "second")
   )
 })
 
@@ -472,8 +522,8 @@ ggplot(metrics_df, aes(x = threshold)) +
 ```{r, final-glm-candidate-miss-class}
 test_data_aug <- test_data %>%
   dplyr::mutate(
-    pred_prob = pred,
-    pred_class = factor(ifelse(pred > threshold, "yes", "no"), levels = c("no", "yes")),
+    pred_prob = glm_pred,
+    pred_class = factor(ifelse(glm_pred > threshold, "yes", "no"), levels = c("no", "yes")),
     subscribed = factor(subscribed, levels = c("no", "yes")),
     result = case_when(
       subscribed == "yes" & pred_class == "yes" ~ "TP",
@@ -495,7 +545,7 @@ test_data$subscribed <- factor(test_data$subscribed, levels = c("no", "yes"))
 
 pr_df <- tibble(
   subscribed = test_data$subscribed,
-  .pred_yes = pred
+  .pred_yes = glm_pred
 )
 
 pr_curve(pr_df, truth = subscribed, .pred_yes) %>%
@@ -506,3 +556,168 @@ pr_curve(pr_df, truth = subscribed, .pred_yes) %>%
   )
 ```
 
+## Prediction - Objective 2
+
+```{r}
+#' Local Variables
+#' -  Setting threshold for all models - might need adjustment for each; but the goal is to compare in a fair ground
+#' -  Train Control for all models, same cross validation. Can be set individually for each model
+#' -  Set Reference Levels
+
+threshold <- 0.25
+model_levels <- levels(candidate_data$subscribed)
+
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 1,
+  classProbs = TRUE,
+  summaryFunction = mnLogLoss
+)
+```
+
+### Quick inspection for potential complexity
+
+```{r}
+bank_loess <- bank
+bank_loess$subscribed <- ifelse(bank_loess$subscribed == "yes", 1, 0)
+plt_numeric_vars <- setdiff(numeric_vars, c("day"))
+
+plots <- lapply(plt_numeric_vars, function(var) {
+  ggplot(bank_loess, aes_string(x = var, y = "subscribed", colour = var)) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, size = 1, span = 1.5) +
+    ylim(-.2, 1.2) +
+    labs(title = paste("Subscription vs", var), y = "Subscription Rate", x = var)
+})
+grid.arrange(grobs = plots, ncol = 3)
+```
+
+| **Variable**   | **Shape**                         | **Interpretation**                                                                  | **Suggestion**                                              |
+|----------------|-----------------------------------|--------------------------------------------------------------------------------------|--------------------------------------------------------------|
+| `age`          | U-shape → increasing              | Older clients tend to subscribe more; age shows a non-linear effect                 | Include `age^2`                                              |
+| `balance`      | Inverted U-shape                  | Clients with mid-range balances are more likely to subscribe                        | Use `balance + balance^2`                                   |
+| `duration`     | Logistic-like rise then plateau   | Longer calls are associated with higher subscription rates, with signs of saturation | Consider `log(duration + 1)` or natural spline              |
+| `campaign`     | Shallow U-shape                   | Additional contacts may reduce effectiveness after a point                          | Keep as linear or bin into tiers                            |
+| `pdays`        | Flat with mild positive curvature | Values like -1 dominate; higher values show a weak increasing trend                 | Cap at 300 or bin; optionally include `pdays == -1` indicator |
+| `previous`     | Curved rise then decline          | Moderate prior contact increases success; too many may reduce effectiveness         | Use `previous + previous^2` or `log(previous + 1)`          |
+
+## Complex Logistic Regresion (GLM)
+
+```{r}
+set.seed(42)
+glm_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "glm",
+  family = "binomial",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+glm_probs <- predict(glm_fit, newdata = test_data, type = "prob")[, "yes"]
+glm_preds <- factor(ifelse(glm_probs > threshold, "yes", "no"), levels = model_levels)
+glm_actual <- factor(test_data$subscribed, levels = model_levels)
+
+confusionMatrix(data = glm_preds, reference = glm_actual, positive = "yes")
+```
+
+## LDA Model
+
+```{r}
+set.seed(42)
+lda_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "lda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+lda_actual <- factor(test_data$subscribed, levels = model_levels)
+lda_probs <- predict(lda_fit, newdata = test_data, type = "prob")[, "yes"]
+lda_preds <- factor(ifelse(lda_probs > threshold, "yes", "no"), levels = model_levels)
+
+confusionMatrix(data = lda_preds, reference = lda_actual, positive = "yes")
+```
+
+## Random Forest
+
+```{r}
+set.seed(42)
+rf_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "ranger",
+  trControl = fitControl,
+  metric = "logLoss",
+  tuneLength = 2
+)
+
+rf_probs <- predict(rf_fit, newdata = test_data, type = "prob")[, "yes"]
+rf_actual <- factor(test_data$subscribed, levels = model_levels)
+rf_preds <- factor(ifelse(rf_probs > threshold, "yes", "no"), levels = model_levels)
+```
+
+## ROC Metrics
+
+```{r}
+roc_lda <- roc(lda_actual, lda_probs, levels = model_levels, direction = "<")
+roc_glm <- roc(glm_actual, glm_pred, levels = model_levels, direction = "<")
+roc_rf <- roc(rf_actual, rf_probs, levels = model_levels, direction = "<")
+
+plot(roc_lda, col = "blue", lwd = 2, main = "ROC Curve: LDA vs Logistic vs Random Forest")
+lines(roc_glm, col = "firebrick", lwd = 2)
+lines(roc_rf, col = "green", lwd = 2)
+
+legend("bottomright",
+  legend = c(
+    paste("LDA           (AUC =", round(auc(roc_lda), 3), ")"),
+    paste("Logistic      (AUC =", round(auc(roc_glm), 3), ")"),
+    paste("Random Forest (AUC =", round(auc(roc_rf), 3), ")")
+  ),
+  col = c("blue", "firebrick", "green"),
+  lwd = 2
+)
+```
+
+## Performance Metrics
+
+```{r}
+cm_lda <- confusionMatrix(lda_preds, lda_actual, positive = "yes")
+cm_glm <- confusionMatrix(pred_class, glm_actual, positive = "yes")
+cm_rf <- confusionMatrix(rf_preds, rf_actual, positive = "yes")
+
+
+custom.logloss <- function(probs, actual, eps = 1e-15) {
+  probs <- pmin(pmax(probs, eps), 1 - eps)
+  actual_binary <- ifelse(actual == "yes", 1, 0)
+  -mean(actual_binary * log(probs) + (1 - actual_binary) * log(1 - probs))
+}
+
+custom.metrics <- function(cm, roc, probs, actual) {
+  sensitivity <- cm$byClass["Sensitivity"]
+  ppv <- cm$byClass["Pos Pred Value"]
+  f1_score <- 2 * ((sensitivity * ppv) / (sensitivity + ppv))
+
+  data.frame(
+    Accuracy    = cm$overall["Accuracy"],
+    Sensitivity = sensitivity,
+    Specificity = cm$byClass["Specificity"],
+    PPV         = ppv,
+    NPV         = cm$byClass["Neg Pred Value"],
+    Prevalence  = cm$byClass["Prevalence"],
+    AUROC       = auc(roc),
+    F1          = f1_score,
+    LogLoss     = custom.logloss(probs, actual)
+  )
+}
+
+results_table <- rbind(
+  LDA = custom.metrics(cm_lda, roc_lda, lda_probs, lda_actual),
+  Logistic = custom.metrics(cm_glm, roc_glm, glm_probs, glm_actual),
+  RandomForest = custom.metrics(cm_rf, roc_rf, rf_probs, rf_actual)
+)
+
+round(results_table, 4)
+```
