@@ -17,7 +17,7 @@ output:
 knitr::opts_chunk$set(
   error = FALSE,
   warning = FALSE,
-  message = FALSE,
+  message = TRUE,
   fig.align = "center"
 )
 ```
@@ -25,7 +25,7 @@ knitr::opts_chunk$set(
 ```{r, final-install-packages, include=FALSE}
 required_packages <- c(
   "ggplot2", "tidyverse", "corrplot", "visdat", "GGally", "car", "reshape2", "MASS",
-  "ggcorrplot", "glmnet", "caret", "RColorBrewer", "plotly", "broom", "yardstick",
+  "ggcorrplot", "glmnet", "caret", "RColorBrewer", "plotly", "broom", "yardstick", "gridGraphics",
   "dplyr", "grid", "gridExtra", "DT", "tidyr", "patchwork", "ggfortify", "factoextra", "pROC"
 )
 
@@ -39,7 +39,7 @@ lapply(required_packages, library, character.only = TRUE)
 
 ```{r defaults, include=FALSE}
 #' Global palette and theme
-base_palette <- brewer.pal(n = 8, name = "Accent")
+base_palette <- brewer.pal(n = 8, name = "Dark2")
 scale_fill_discrete <- function(...) scale_fill_manual(values = base_palette, ...)
 scale_color_discrete <- function(...) scale_color_manual(values = base_palette, ...)
 ```
@@ -472,8 +472,8 @@ train_data <- candidate_data[split, ]
 test_data  <- candidate_data[-split, ]
 
 #num_feat <- c("duration", "poutcome", "pdays", "balance", "default", "housing", "campaign", "month_sin", "month_cos")
-num_feat <- c("duration", "poutcome", "balance", "housing", "campaign", "month_sin", "month_cos")
-cat_feat <- c("contact", "loan", "education", "marital", "job", "day", "previous")
+num_feat <- c("duration", "balance", "campaign", "month_sin", "month_cos")
+cat_feat <- c("contact", "loan", "education", "marital", "job", "day", "previous", "poutcome", "housing")
 
 features <- c(num_feat, cat_feat)
 candidate_model <- as.formula(paste("subscribed ~", paste(features, collapse = " + ")))
@@ -558,30 +558,13 @@ pr_curve(pr_df, truth = subscribed, .pred_yes) %>%
 
 ## Prediction - Objective 2
 
-```{r}
-#' Local Variables
-#' -  Setting threshold for all models - might need adjustment for each; but the goal is to compare in a fair ground
-#' -  Train Control for all models, same cross validation. Can be set individually for each model
-#' -  Set Reference Levels
-
-threshold <- 0.25
-model_levels <- levels(candidate_data$subscribed)
-
-fitControl <- trainControl(
-  method = "repeatedcv",
-  number = 10,
-  repeats = 1,
-  classProbs = TRUE,
-  summaryFunction = mnLogLoss
-)
-```
 
 ### Quick inspection for potential complexity
 
-```{r}
+```{r, final-complex-plt-1}
 bank_loess <- bank
 bank_loess$subscribed <- ifelse(bank_loess$subscribed == "yes", 1, 0)
-plt_numeric_vars <- setdiff(numeric_vars, c("day"))
+plt_numeric_vars <- setdiff(numeric_vars, c())
 
 plots <- lapply(plt_numeric_vars, function(var) {
   ggplot(bank_loess, aes_string(x = var, y = "subscribed", colour = var)) +
@@ -602,9 +585,200 @@ grid.arrange(grobs = plots, ncol = 3)
 | `pdays`        | Flat with mild positive curvature | Values like -1 dominate; higher values show a weak increasing trend                 | Cap at 300 or bin; optionally include `pdays == -1` indicator |
 | `previous`     | Curved rise then decline          | Moderate prior contact increases success; too many may reduce effectiveness         | Use `previous + previous^2` or `log(previous + 1)`          |
 
+## Prepare Complexity
+
+### Look for some interactions
+
+```{r, final-complex-interactions}
+#'  By domain knowledge we explore couple interactions.
+#'  - duration × poutcome: Duration and previous outcome can drive success
+#'  - duration × contact: Communication channel can affect duration of calls
+#'  - job × education: Job and education can have strong relationships
+#'  - housing × loan: Debt-free can drive decisions regarding financial risks
+
+inter_data <- candidate_data
+inter_data$subscribed <- ifelse(inter_data$subscribed == "yes", 1, 0)
+
+iner_job_data <- inter_data |>
+  group_by(job, education) |>
+  summarise(subscribe_rate = mean(subscribed), .groups = "drop")
+
+housing_loan_data <- inter_data %>%
+  group_by(housing, loan) %>%
+  summarise(rate = mean(subscribed), .groups = "drop")
+
+
+plt_outcome <- ggplot(inter_data, aes(y = subscribed, x = duration, colour = poutcome)) +
+  geom_point() +
+  labs(
+    title = "Subscription Rate by Duration × Outcome",
+  ) +
+  geom_smooth(method = "loess", size = 1, span = .5) +
+  ylim(-.2, 1)
+
+
+plt_dur_ct <- ggplot(inter_data, aes(y = subscribed, x = duration, colour = contact)) +
+  geom_point() +
+  labs(
+    title = "Subscription Rate by Duration × Contact",
+  ) +
+  geom_smooth(method = "loess", size = 1, span = .5) +
+  ylim(-.2, 1)
+
+
+plt_job <- ggplot(iner_job_data, aes(x = education, y = job, fill = subscribe_rate)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "steelblue", name = "Subscription Rate") +
+  labs(
+    title = "Subscription Rate by Job × Education",
+    x = "Education Level", y = "Job"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plt_house_loan <- ggplot(housing_loan_data, aes(x = housing, y = rate, fill = loan)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Subscription Rate by Housing × Loan",
+    x = "Housing Loan", y = "Subscription Rate"
+  )
+
+(plt_outcome + plt_dur_ct) / (plt_job + plt_house_loan)
+```
+
+```{r, final-complex-feat-selection-setup}
+#' Local Variables
+#' -  Setting threshold for all models - might need adjustment for each; but the goal is to compare in a fair ground
+#' -  Train Control for all models, same cross validation. Can be set individually for each model
+#' -  Set Reference Levels
+
+threshold <- 0.20
+model_levels <- levels(candidate_data$subscribed)
+
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 1,
+  classProbs = TRUE,
+  summaryFunction = mnLogLoss
+)
+
+drop_num <- c("pdays")
+drop_cat <- c("month", "subscribed")
+no_transform <- c("month_sin", "month_cos", "day")
+
+numeric_clean <- setdiff(numeric_vars, drop_num)
+categorical_clean <- setdiff(categorical_vars, drop_cat)
+
+existing_vars <- names(candidate_data)
+direct_numeric <- intersect(setdiff(no_transform, drop_num), existing_vars)
+
+# For GLM/LDA models
+num_poly <- setdiff(numeric_clean, no_transform)
+poly_terms <- paste0("poly(", num_poly, ", 2, raw = TRUE)")
+
+interaction_terms <- c(
+  "poly(duration, 2, raw = TRUE):poutcome",
+  "poly(duration, 2, raw = TRUE):contact",
+  "job:education",
+  "housing:loan"
+)
+
+formula_terms_full <- c(poly_terms, direct_numeric, categorical_clean, interaction_terms)
+candidate_formula_string <- paste("subscribed ~", paste(formula_terms_full, collapse = " + "))
+candidate_model <- as.formula(candidate_formula_string)
+
+# Random Forest version
+formula_terms_rf <- intersect(c(numeric_clean, direct_numeric, categorical_clean), existing_vars)
+rf_formula_string <- paste("subscribed ~", paste(formula_terms_rf, collapse = " + "))
+rf_candidate_model <- as.formula(rf_formula_string)
+
+candidate_model
+rf_candidate_model
+```
+
+### Feature Selection
+
+```{r, final-complex-feat-selection-step}
+step_model <- stepAIC(
+  glm(candidate_model, data = train_data, family = binomial),
+  scope = list(lower = ~ month_cos, upper = candidate_model),
+  direction = "both"
+)
+
+selected_formula <- formula(step_model)
+summary(step_model)
+```
+
+
+### Helper Functions
+
+```{r, final-complex-model-helpers}
+#' Simple Functions to avoid repeating a lot
+#' Compute RMSE, LOGLOSS, and a Readeable Table for metrics
+
+actual_preds <- factor(test_data$subscribed, levels = model_levels)
+
+custom.rmse <- function(predicted, actual) {
+  sqrt(mean((predicted - ifelse(actual == "yes", 1, 0))^2))
+}
+
+custom.logloss <- function(probs, actual, eps = 1e-15) {
+  probs <- pmin(pmax(probs, eps), 1 - eps)
+  actual_binary <- ifelse(actual == "yes", 1, 0)
+  -mean(actual_binary * log(probs) + (1 - actual_binary) * log(1 - probs))
+}
+
+custom.results <- function(model_fit) {
+  probs <- predict(model_fit, newdata = test_data, type = "prob")[, "yes"]
+  classification <- factor(ifelse(probs > threshold, "yes", "no"), levels = model_levels)
+  cm <- confusionMatrix(data = classification, reference = actual_preds, positive = "yes")
+  
+  list(
+    Probabilities = probs,
+    #Classification = classification,
+    ConfusionMatrix = cm
+  )
+}
+
+custom.metrics <- function(cm, fit, roc, probs) {
+  sensitivity <- cm$byClass["Sensitivity"]
+  ppv <- cm$byClass["Pos Pred Value"]
+  f1_score <- if ((sensitivity + ppv) > 0) {
+    2 * ((sensitivity * ppv) / (sensitivity + ppv))
+  } else {
+    NA
+  }
+
+  log_loss <- custom.logloss(probs, actual_preds)
+  rmse <- custom.rmse(probs, actual_preds)
+
+  aic <- NA
+  if (!is.null(fit$finalModel) && "aic" %in% names(fit$finalModel)) {
+    aic <- fit$finalModel$aic
+  } else if (inherits(fit$finalModel, "glm")) {
+    aic <- AIC(fit$finalModel)
+  }
+
+  data.frame(
+    RMSE        = rmse,
+    AIC         = aic,
+    Accuracy    = cm$overall["Accuracy"],
+    Sensitivity = sensitivity,
+    Specificity = cm$byClass["Specificity"],
+    PPV         = ppv,
+    NPV         = cm$byClass["Neg Pred Value"],
+    Prevalence  = cm$byClass["Prevalence"],
+    AUROC       = auc(roc),
+    LogLoss     = log_loss,
+    F1          = f1_score
+  )
+}
+```
+
 ## Complex Logistic Regresion (GLM)
 
-```{r}
+```{r, final-complex-model-glm}
 set.seed(42)
 glm_fit <- train(
   candidate_model,
@@ -615,16 +789,12 @@ glm_fit <- train(
   metric = "logLoss"
 )
 
-glm_probs <- predict(glm_fit, newdata = test_data, type = "prob")[, "yes"]
-glm_preds <- factor(ifelse(glm_probs > threshold, "yes", "no"), levels = model_levels)
-glm_actual <- factor(test_data$subscribed, levels = model_levels)
-
-confusionMatrix(data = glm_preds, reference = glm_actual, positive = "yes")
+glm_results <- custom.results(glm_fit)
 ```
 
 ## LDA Model
 
-```{r}
+```{r, final-complex-model-lda}
 set.seed(42)
 lda_fit <- train(
   candidate_model,
@@ -634,90 +804,77 @@ lda_fit <- train(
   metric = "logLoss"
 )
 
-lda_actual <- factor(test_data$subscribed, levels = model_levels)
-lda_probs <- predict(lda_fit, newdata = test_data, type = "prob")[, "yes"]
-lda_preds <- factor(ifelse(lda_probs > threshold, "yes", "no"), levels = model_levels)
+lda_results <- custom.results(lda_fit)
+```
 
-confusionMatrix(data = lda_preds, reference = lda_actual, positive = "yes")
+
+## KNN
+
+```{r, final-model-knn}
+knn_fit <- train(
+  rf_candidate_model,
+  data = train_data,
+  method = "knn",
+  preProcess = c("center", "scale"),
+  trControl = fitControl,
+  tuneLength = 2
+)
+
+knn_results <- custom.results(knn_fit)
 ```
 
 ## Random Forest
 
-```{r}
+```{r, final-model-random-forest}
 set.seed(42)
 rf_fit <- train(
-  candidate_model,
+  rf_candidate_model,
   data = train_data,
   method = "ranger",
   trControl = fitControl,
   metric = "logLoss",
-  tuneLength = 2
+  tuneLength = 1
 )
 
-rf_probs <- predict(rf_fit, newdata = test_data, type = "prob")[, "yes"]
-rf_actual <- factor(test_data$subscribed, levels = model_levels)
-rf_preds <- factor(ifelse(rf_probs > threshold, "yes", "no"), levels = model_levels)
+rf_results <- custom.results(rf_fit)
 ```
 
-## ROC Metrics
+## Performance Metrics
 
-```{r}
-roc_lda <- roc(lda_actual, lda_probs, levels = model_levels, direction = "<")
-roc_glm <- roc(glm_actual, glm_pred, levels = model_levels, direction = "<")
-roc_rf <- roc(rf_actual, rf_probs, levels = model_levels, direction = "<")
+```{r, final-model-metrics}
+#' Store so we can put side by side
 
-plot(roc_lda, col = "blue", lwd = 2, main = "ROC Curve: LDA vs Logistic vs Random Forest")
-lines(roc_glm, col = "firebrick", lwd = 2)
-lines(roc_rf, col = "green", lwd = 2)
+
+roc_lda <- roc(actual_preds, lda_results$Probabilities, levels = model_levels, direction = "<")
+roc_glm <- roc(actual_preds, glm_results$Probabilities, levels = model_levels, direction = "<")
+roc_rf <- roc(actual_preds, rf_results$Probabilities, levels = model_levels, direction = "<")
+roc_knn <- roc(actual_preds, knn_results$Probabilities, levels = model_levels, direction = "<")
+
+plot(roc_lda, col = base_palette[1], lwd = 2, main = "ROC Curve: LDA vs Logistic vs Random Forest")
+lines(roc_glm, col = base_palette[2], lwd = 2)
+lines(roc_rf, col = base_palette[3], lwd = 2)
+lines(roc_knn, col = base_palette[4], lwd = 2)
 
 legend("bottomright",
   legend = c(
     paste("LDA           (AUC =", round(auc(roc_lda), 3), ")"),
     paste("Logistic      (AUC =", round(auc(roc_glm), 3), ")"),
-    paste("Random Forest (AUC =", round(auc(roc_rf), 3), ")")
+    paste("Random Forest (AUC =", round(auc(roc_rf), 3), ")"),
+    paste("KNN           (AUC =", round(auc(roc_knn), 3), ")")
   ),
-  col = c("blue", "firebrick", "green"),
-  lwd = 2
+  col = base_palette[1:4],
+  lwd = 4
 )
 ```
 
-## Performance Metrics
+### Metrics Table Comparision
 
-```{r}
-cm_lda <- confusionMatrix(lda_preds, lda_actual, positive = "yes")
-cm_glm <- confusionMatrix(pred_class, glm_actual, positive = "yes")
-cm_rf <- confusionMatrix(rf_preds, rf_actual, positive = "yes")
-
-
-custom.logloss <- function(probs, actual, eps = 1e-15) {
-  probs <- pmin(pmax(probs, eps), 1 - eps)
-  actual_binary <- ifelse(actual == "yes", 1, 0)
-  -mean(actual_binary * log(probs) + (1 - actual_binary) * log(1 - probs))
-}
-
-custom.metrics <- function(cm, roc, probs, actual) {
-  sensitivity <- cm$byClass["Sensitivity"]
-  ppv <- cm$byClass["Pos Pred Value"]
-  f1_score <- 2 * ((sensitivity * ppv) / (sensitivity + ppv))
-
-  data.frame(
-    Accuracy    = cm$overall["Accuracy"],
-    Sensitivity = sensitivity,
-    Specificity = cm$byClass["Specificity"],
-    PPV         = ppv,
-    NPV         = cm$byClass["Neg Pred Value"],
-    Prevalence  = cm$byClass["Prevalence"],
-    AUROC       = auc(roc),
-    F1          = f1_score,
-    LogLoss     = custom.logloss(probs, actual)
-  )
-}
-
+```{r, final-model-comparision}
 results_table <- rbind(
-  LDA = custom.metrics(cm_lda, roc_lda, lda_probs, lda_actual),
-  Logistic = custom.metrics(cm_glm, roc_glm, glm_probs, glm_actual),
-  RandomForest = custom.metrics(cm_rf, roc_rf, rf_probs, rf_actual)
+  LDA = custom.metrics(lda_results$ConfusionMatrix, lda_fit, roc_lda, lda_results$Probabilities),
+  Logistic = custom.metrics(glm_results$ConfusionMatrix, glm_fit, roc_glm, glm_results$Probabilities),
+  RandomForest = custom.metrics(rf_results$ConfusionMatrix, rf_fit, roc_rf, rf_results$Probabilities),
+  kNN = custom.metrics(knn_results$ConfusionMatrix, knn_fit, roc_knn, knn_results$Probabilities)
 )
-
-round(results_table, 4)
+round(data.frame(t(results_table)), 4)
 ```
