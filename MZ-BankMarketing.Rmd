@@ -225,7 +225,7 @@ bank <- bank[-29183, ]
 
 ### Correlation
 
-```{r, final-correlation}
+```{r, final-correlation, out.width="100%"}
 for_corr <- bank
 for_corr$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
 
@@ -249,7 +249,7 @@ ggplot(cor_df, aes(x = reorder(variable, correlation), y = correlation)) +
 
 ### PCA
 
-```{r, final-pca}
+```{r, final-pca, out.width="100%"}
 for_pca <- bank
 for_pca <- bank[sapply(data, is.numeric)]
 
@@ -309,7 +309,7 @@ pc_table <- data.frame(
 pc_table
 ```
 
-```{r, final-pca-scores}
+```{r, final-pca-scores, out.width="100%"}
 pca_scores <- as.data.frame(pca$x)
 pca_scores$subscribed <- bank$subscribed
 
@@ -496,7 +496,7 @@ confusionMatrix(pred_class, glm_actual, positive = "yes")
 
 #### Tune thresholds
 
-```{r, final-glm-candidate-thr}
+```{r, final-glm-candidate-thr, out.width="100%"}
 thresholds <- seq(0.1, 0.9, by = 0.01)
 
 metrics_df <- purrr::map_dfr(thresholds, function(thresh) {
@@ -519,7 +519,7 @@ ggplot(metrics_df, aes(x = threshold)) +
 
 #### Misclassification spot-check
 
-```{r, final-glm-candidate-miss-class}
+```{r, final-glm-candidate-miss-class, out.width="100%"}
 test_data_aug <- test_data %>%
   dplyr::mutate(
     pred_prob = glm_pred,
@@ -561,7 +561,7 @@ pr_curve(pr_df, truth = subscribed, .pred_yes) %>%
 
 ### Quick inspection for potential complexity
 
-```{r, final-complex-plt-1}
+```{r, final-complex-plt-1, out.width="100%"}
 bank_loess <- bank
 bank_loess$subscribed <- ifelse(bank_loess$subscribed == "yes", 1, 0)
 plt_numeric_vars <- setdiff(numeric_vars, c())
@@ -589,7 +589,7 @@ grid.arrange(grobs = plots, ncol = 3)
 
 ### Look for some interactions
 
-```{r, final-complex-interactions}
+```{r, final-complex-interactions, out.width="100%"}
 #'  By domain knowledge we explore couple interactions.
 #'  - duration × poutcome: Duration and previous outcome can drive success
 #'  - duration × contact: Communication channel can affect duration of calls
@@ -716,6 +716,7 @@ summary(step_model)
 ```{r, final-complex-model-helpers}
 #' Simple Functions to avoid repeating a lot
 #' Compute RMSE, LOGLOSS, and a Readeable Table for metrics
+threshold <- 0.25
 
 actual_preds <- factor(test_data$subscribed, levels = model_levels)
 
@@ -789,7 +790,17 @@ glm_fit <- train(
   metric = "logLoss"
 )
 
+glm_fit_selected <- train(
+  selected_formula,
+  data = train_data,
+  method = "glm",
+  family = "binomial",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
 glm_results <- custom.results(glm_fit)
+glm_results_selected <- custom.results(glm_fit_selected)
 ```
 
 ## LDA Model
@@ -804,7 +815,16 @@ lda_fit <- train(
   metric = "logLoss"
 )
 
+lda_fit_selected <- train(
+  selected_formula,
+  data = train_data,
+  method = "lda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
 lda_results <- custom.results(lda_fit)
+lda_results_selected <- custom.results(lda_fit_selected)
 ```
 
 
@@ -847,6 +867,7 @@ roc_glm <- roc(actual_preds, glm_results$Probabilities, levels = model_levels, d
 roc_rf <- roc(actual_preds, rf_results$Probabilities, levels = model_levels, direction = "<")
 roc_knn <- roc(actual_preds, knn_results$Probabilities, levels = model_levels, direction = "<")
 
+#' Hybrid Selected ROC
 plot(roc_lda, col = base_palette[1], lwd = 2, main = "ROC Curve: LDA vs Logistic vs Random Forest")
 lines(roc_glm, col = base_palette[2], lwd = 2)
 lines(roc_rf, col = base_palette[3], lwd = 2)
@@ -864,12 +885,35 @@ legend("bottomright",
 )
 ```
 
+#### Feature Selected ROC
+
+```{r, final-model-metrics-fs}
+#' Feature Selected ROC
+roc_lda_selected <- roc(actual_preds, lda_results_selected$Probabilities, levels = model_levels, direction = "<")
+roc_glm_selected <- roc(actual_preds, glm_results_selected$Probabilities, levels = model_levels, direction = "<")
+
+#' Feature Selected ROC
+plot(roc_lda_selected, col = base_palette[7], lwd = 2, main = "ROC Curve: LDA vs Logistic - (Feature Selected)")
+lines(roc_glm_selected, col = base_palette[8], lwd = 2)
+
+legend("bottomright",
+  legend = c(
+    paste("LDA           (AUC =", round(auc(roc_lda_selected), 3), ")"),
+    paste("Logistic      (AUC =", round(auc(roc_glm_selected), 3), ")")
+  ),
+  col = base_palette[7:8],
+  lwd = 4
+)
+```
+
 ### Metrics Table Comparision
 
 ```{r, final-model-comparision}
 results_table <- rbind(
   LDA = custom.metrics(lda_results$ConfusionMatrix, lda_fit, roc_lda, lda_results$Probabilities),
+  LDA.FeatureSelected = custom.metrics(lda_results_selected$ConfusionMatrix, lda_fit_selected, roc_lda_selected, lda_results_selected$Probabilities),
   Logistic = custom.metrics(glm_results$ConfusionMatrix, glm_fit, roc_glm, glm_results$Probabilities),
+  Logistic.FeatureSelected = custom.metrics(glm_results_selected$ConfusionMatrix, glm_fit_selected, roc_glm_selected, glm_results_selected$Probabilities),
   RandomForest = custom.metrics(rf_results$ConfusionMatrix, rf_fit, roc_rf, rf_results$Probabilities),
   kNN = custom.metrics(knn_results$ConfusionMatrix, knn_fit, roc_knn, knn_results$Probabilities)
 )
