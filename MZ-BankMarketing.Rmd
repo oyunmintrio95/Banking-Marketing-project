@@ -184,9 +184,7 @@ wrap_plots(plt_num, ncol = 3) & theme(legend.position = "none")
 for_outliers <- bank
 for_outliers$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
 model <- lm(subscribed ~ previous, data = for_outliers)
-influencePlot(model, id.method = "identify", 
-              main = "Influence Plot: Cook's D vs Leverage",
-              sub = "Size of circle = Cook's distance")
+influencePlot(model, main = "Influence Plot: Cook's D vs Leverage", sub = "Size of circle = Cook's distance")
 ```
 
 #### Plot the most influential
@@ -221,6 +219,11 @@ Observation 29183 has extremely high leverage and Cook’s Distance (~44.3), mak
 
 ```{r, final-remove-outliers}
 bank <- bank[-29183, ]
+
+for_outliers <- bank
+for_outliers$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
+model <- lm(subscribed ~ previous, data = for_outliers)
+influencePlot(model, main = "Influence Plot: Cook's D vs Leverage", sub = "Size of circle = Cook's distance")
 ```
 
 ### Correlation
@@ -494,6 +497,13 @@ glm_actual <- factor(test_data$subscribed, levels = model_levels)
 confusionMatrix(pred_class, glm_actual, positive = "yes")
 ```
 
+```{r}
+int <- glm(candidate_model, data = candidate_data, family = binomial)
+
+exp(coef(int))
+confint(int)
+```
+
 #### Tune thresholds
 
 ```{r, final-glm-candidate-thr, out.width="100%"}
@@ -657,7 +667,7 @@ model_levels <- levels(candidate_data$subscribed)
 
 fitControl <- trainControl(
   method = "repeatedcv",
-  number = 5,
+  number = 10,
   repeats = 1,
   classProbs = TRUE,
   summaryFunction = mnLogLoss
@@ -709,7 +719,9 @@ step_model <- stepAIC(
 selected_formula <- formula(step_model)
 summary(step_model)
 ```
-
+```{r}
+summary(expstep_model)
+```
 
 ### Helper Functions
 
@@ -837,7 +849,7 @@ knn_fit <- train(
   method = "knn",
   preProcess = c("center", "scale"),
   trControl = fitControl,
-  tuneLength = 2
+  tuneLength = 5
 )
 
 knn_results <- custom.results(knn_fit)
@@ -853,7 +865,7 @@ rf_fit <- train(
   method = "ranger",
   trControl = fitControl,
   metric = "logLoss",
-  tuneLength = 1
+  tuneLength = 5
 )
 
 rf_results <- custom.results(rf_fit)
