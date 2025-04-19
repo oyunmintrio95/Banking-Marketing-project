@@ -842,9 +842,6 @@ rf_results <- custom.results(rf_fit)
 ## Performance Metrics
 
 ```{r, final-model-metrics}
-#' Store so we can put side by side
-
-
 roc_lda <- roc(actual_preds, lda_results$Probabilities, levels = model_levels, direction = "<")
 roc_glm <- roc(actual_preds, glm_results$Probabilities, levels = model_levels, direction = "<")
 roc_rf <- roc(actual_preds, rf_results$Probabilities, levels = model_levels, direction = "<")
