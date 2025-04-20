@@ -542,6 +542,25 @@ month_table <- month_df %>%
 table_grob <- gridExtra::tableGrob(month_table, rows = NULL)
 plot_month + patchwork::wrap_elements(table_grob) + plot_layout(widths = c(2, 1))
 ```
+```{r}
+
+summary_model <- summary(int)
+coefs <- summary_model$coefficients
+pvals <- coefs[, 4]
+odd_ci <- exp(cbind(
+  "Odds Ratio" = coef(int),
+  confint.default(int, level = 0.95)
+))
+
+significant <- pvals <= 0.10
+odd_ratio_significant <- odd_ci[significant, ]
+
+odd_ratio_significant <- cbind(odd_ratio_significant, "p-value" = round(pvals[significant], 4))
+
+# Print
+print(odd_ratio_significant)
+summary_model
+```
 
 #### Tune thresholds
 
