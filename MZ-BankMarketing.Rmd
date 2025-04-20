@@ -476,7 +476,7 @@ test_data  <- candidate_data[-split, ]
 
 #num_feat <- c("duration", "poutcome", "pdays", "balance", "default", "housing", "campaign", "month_sin", "month_cos")
 num_feat <- c("duration", "balance", "campaign", "month_sin", "month_cos")
-cat_feat <- c("contact", "loan", "education", "marital", "job", "day", "previous", "poutcome", "housing")
+cat_feat <- c("contact", "loan", "education", "marital", "job", "poutcome", "housing")
 
 features <- c(num_feat, cat_feat)
 candidate_model <- as.formula(paste("subscribed ~", paste(features, collapse = " + ")))
@@ -497,11 +497,50 @@ glm_actual <- factor(test_data$subscribed, levels = model_levels)
 confusionMatrix(pred_class, glm_actual, positive = "yes")
 ```
 
-```{r}
+```{r, final-glm-summary-month-result}
 int <- glm(candidate_model, data = candidate_data, family = binomial)
 
-exp(coef(int))
-confint(int)
+coefs <- coef(int)
+beta_sin <- coefs["month_sin"]
+beta_cos <- coefs["month_cos"]
+
+month_df <- tibble(
+  month = factor(month.abb, levels = month.abb),
+  month_num = 1:12,
+  sin_val = sin(2 * pi * month_num / 12),
+  cos_val = cos(2 * pi * month_num / 12),
+  linear_combo = beta_sin * sin_val + beta_cos * cos_val,
+) |> mutate(
+  odds_ratio = exp(linear_combo),
+  odds_pct = (odds_ratio - 1) * 100
+)
+
+plot_month <- ggplot(month_df, aes(x = month, y = odds_ratio)) +
+  geom_col(fill = base_palette[3]) +
+  geom_text(aes(label = paste0(round(odds_pct, 1), "%")),
+    vjust = -0.5, size = 3.5
+  ) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = base_palette[4]) +
+  labs(
+    title = "Effect of Month on Odds of Subscription",
+    subtitle = "Odds ratio relative to other months",
+    y = "Odds Ratio",
+    x = "Month"
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(scale = 1),
+    limits = c(0, max(month_df$odds_ratio) + 0.3)
+  )
+
+month_table <- month_df %>%
+  select(Month = month, OddsRatio = odds_ratio, PctChange = odds_pct) %>%
+  mutate(
+    OddsRatio = round(OddsRatio, 3),
+    PctChange = paste0(round(PctChange, 1), "%")
+  )
+
+table_grob <- gridExtra::tableGrob(month_table, rows = NULL)
+plot_month + patchwork::wrap_elements(table_grob) + plot_layout(widths = c(2, 1))
 ```
 
 #### Tune thresholds
@@ -667,7 +706,7 @@ model_levels <- levels(candidate_data$subscribed)
 
 fitControl <- trainControl(
   method = "repeatedcv",
-  number = 10,
+  number = 5,
   repeats = 1,
   classProbs = TRUE,
   summaryFunction = mnLogLoss
@@ -718,9 +757,6 @@ step_model <- stepAIC(
 
 selected_formula <- formula(step_model)
 summary(step_model)
-```
-```{r}
-summary(expstep_model)
 ```
 
 ### Helper Functions
@@ -849,7 +885,7 @@ knn_fit <- train(
   method = "knn",
   preProcess = c("center", "scale"),
   trControl = fitControl,
-  tuneLength = 5
+  tuneLength = 2
 )
 
 knn_results <- custom.results(knn_fit)
@@ -865,7 +901,7 @@ rf_fit <- train(
   method = "ranger",
   trControl = fitControl,
   metric = "logLoss",
-  tuneLength = 5
+  tuneLength = 2
 )
 
 rf_results <- custom.results(rf_fit)
