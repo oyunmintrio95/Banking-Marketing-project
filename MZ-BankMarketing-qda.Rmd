@@ -1,0 +1,990 @@
+---
+title: "Bank Marketing - Subscription"
+author: "Miguel Zavala"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, final-setup, include=FALSE}
+#' - Style rules
+#' Align to code style guide found at TidyVerse <a href='https://style.tidyverse.org/'>R Style Guide</a>
+#'
+#' - Publishing to Github Pages
+#' When ready to push the code please execute the knit command to generate an index.html and make sure is cleanup
+#'
+
+knitr::opts_chunk$set(
+  error = FALSE,
+  warning = FALSE,
+  message = TRUE,
+  fig.align = "center"
+)
+```
+
+```{r, final-install-packages, include=FALSE}
+required_packages <- c(
+  "ggplot2", "tidyverse", "corrplot", "visdat", "GGally", "car", "reshape2", "MASS",
+  "ggcorrplot", "glmnet", "caret", "RColorBrewer", "plotly", "broom", "yardstick", "gridGraphics",
+  "dplyr", "grid", "gridExtra", "DT", "tidyr", "patchwork", "ggfortify", "factoextra", "pROC"
+)
+
+missing_packages <- required_packages[!(required_packages %in% installed.packages()[, "Package"])]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages, dependencies = TRUE)
+}
+
+lapply(required_packages, library, character.only = TRUE)
+```
+
+```{r defaults, include=FALSE}
+#' Global palette and theme
+base_palette <- brewer.pal(n = 12, name = "Dark2")
+scale_fill_discrete <- function(...) scale_fill_manual(values = base_palette, ...)
+scale_color_discrete <- function(...) scale_color_manual(values = base_palette, ...)
+```
+
+# Bank Marketing
+
+Goal for the project is to Predict whether a client will subscribe (yes / no) to a term deposit, this based on data from a Portuguese bank’s direct marketing campaigns conducted via phone calls.
+
+-   Dataset Used: We selected the bank-full.csv dataset — an older but complete version containing:
+    -   45211 observations
+    -   17 variables (16 predictors + 1 target: y)
+    -   Period covered: Marketing campaign data from May 2008 to November 2010
+    -   Target Variable: y — Binary response (yes = subscribed, no = not subscribed)
+-   Additional Context:
+    -   Multiple contacts may exist per client
+    -   The prediction task is framed as a binary classification problem
+
+The dataset is structured and suitable for models like Logistic Regression, LDA, QDA, KNN, Random Forest, and others.
+
+## Objectives
+
+-   Build and interpret a logistic regression model without interaction terms.
+-   Use EDA and domain intuition (not algorithmic feature selection) to guide variable inclusion.
+-   Interpret regression coefficients and confidence intervals, focusing on how key predictor variables influence the likelihood of subscription.
+-   Distinguish between statistical significance (p-values, CIs) and practical significance (effect magnitude and meaning).
+-   Use AIC as the primary model comparison tool during training, ensuring the model remains interpretable and grounded in insights.
+
+## Exploratory Data Analysis
+
+```{r, final-eda-load-data}
+#data <- read.csv("./bank-full.csv", header = TRUE, sep = ";", stringsAsFactors = TRUE)
+data <- read.csv("C:/Users/oyunm/Downloads/bank+marketing/bank/bank-full.csv", header = TRUE, stringsAsFactors = TRUE)
+
+bank <- data |> rename(subscribed = y)
+num_rows <- nrow(bank)
+num_cols <- ncol(bank) - 1
+
+data_summary <- data.frame(
+  Characteristic = c("Number of Rows", "Number of Columns", "Number of Predictors", "Target Variable"),
+  Value = c(num_rows, num_cols, num_cols, "subscribed")
+)
+
+data_summary
+```
+
+### Summary Statistics
+
+```{r, final-eda-summary}
+summary(bank)
+```
+
+```{r, final-eda-summary-types}
+str(bank)
+```
+
+### Missing analysis
+
+This data-set contains no empty values at first sight.
+
+```{r, final-eda-empty-1}
+colSums(is.na(bank))
+```
+
+### Separating Numerical vs Categorical
+
+```{r, final-data-variables}
+numeric_vars <- names(bank)[sapply(bank, is.numeric)]
+categorical_vars <- names(bank)[sapply(bank, function(x) is.factor(x) || is.character(x))]
+
+cat("Numeric variables:\n")
+print(numeric_vars)
+
+cat("Categorical variables:\n")
+print(categorical_vars)
+
+```
+
+#### Plot of missing data
+
+Visual confirmation for emptyness search, no data is missing in this data set
+
+```{r, final-eda-empty-2}
+vis_miss(bank) +
+  labs(
+    title = "Visualizing Missing Data",
+    x = "",
+    y = ""
+  ) +
+  theme(
+    plot.title = element_text(size = 8, face = "bold"),
+    plot.subtitle = element_text(size = 8),
+    axis.text.x = element_text(angle = 90, hjust = 1)
+  )
+```
+
+
+### Find some relationships
+
+```{r, final-eda-sub-rate}
+plt_subscribed <- bank |>
+  group_by(subscribed) |>
+  summarise(cnt = n()) |>
+  mutate(perc = round(cnt / sum(cnt), 4))
+
+plt_prop <- ggplot(plt_subscribed, aes(x = subscribed, y = perc, colour = subscribed)) +
+  geom_bar(aes(fill = subscribed), show.legend = FALSE, stat = "identity") +
+  ylab("Proportion of Subscribed")
+
+grid.arrange(grobs = list(tableGrob(plt_subscribed), plt_prop), ncol = 1)
+```
+
+```{r, final-eda-cat-rate-sub, out.width="100%"}
+categorical_vars_plt <- categorical_vars[categorical_vars != "subscribed"]
+
+plt_categorical <- lapply(seq_along(categorical_vars_plt), function(i) {
+  ggplot(bank, aes_string(x = categorical_vars_plt[i], fill = "subscribed")) +
+    geom_bar(position = "fill") +
+    scale_y_continuous(labels = scales::percent) +
+    scale_color_discrete() +
+    labs(title = paste("Subscription Rate by", categorical_vars_plt[i]),
+         y = "Proportion", x = NULL) +
+    coord_flip() +
+    theme(legend.position = if (i == 1) "bottom" else "none")
+})
+
+wrap_plots(plt_categorical, ncol = 3, guides = "collect") &  theme(legend.position = "bottom")
+```
+
+```{r, final-eda-num-rate-sub, out.width="100%"}
+plt_num <- lapply(numeric_vars, function(var) {
+  ggplot(bank, aes_string(x = "subscribed", y = var, fill = "subscribed")) +
+    geom_boxplot(alpha = 0.7) +
+    scale_color_discrete() +
+    labs(title = paste("Dist. of", var, "by Subscribed"), y = var, x = NULL)
+})
+
+wrap_plots(plt_num, ncol = 3) & theme(legend.position = "none")
+```
+
+### Outlier assesment
+
+```{r, final-eda-num-outliers, out.width="100%"}
+for_outliers <- bank
+for_outliers$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
+model <- lm(subscribed ~ previous, data = for_outliers)
+influencePlot(model, id.method = "identify", 
+              main = "Influence Plot: Cook's D vs Leverage",
+              sub = "Size of circle = Cook's distance")
+```
+
+#### Plot the most influential
+
+```{r, final-eda-num-outliers-most, out.width="100%"}
+cooks_d <- cooks.distance(model)
+N <- 5
+top_influential_df <- data.frame(
+  index = 1:length(cooks_d),
+  cooks_distance = cooks_d,
+  previous = bank$previous,
+  subscribed = bank$subscribed
+) |>
+  arrange(desc(cooks_distance)) |>
+  slice(1:N)
+
+ggplot(top_influential_df, aes(x = reorder(as.factor(index), -cooks_distance), y = cooks_distance)) +
+  geom_col(fill = base_palette[3]) +
+  geom_text(aes(label = round(cooks_distance, 4)), vjust = -0.5, size = 3.5) +
+  labs(
+    title = paste("Top", N, "Influential Points (Cook's Distance)"),
+    x = "Observation Index",
+    y = "Cook's Distance"
+  )
+```
+
+<div>
+Observation 29183 has extremely high leverage and Cook’s Distance (~44.3), making it a highly influential point in the model.
+</div>
+
+#### Remove Observation
+
+```{r, final-remove-outliers}
+bank <- bank[-29183, ]
+```
+
+### Correlation
+
+```{r, final-correlation, out.width="100%"}
+for_corr <- bank
+for_corr$subscribed <- ifelse(bank$subscribed == "yes", 1, 0)
+
+vars_corr <- names(for_corr)[sapply(for_corr, is.numeric)]
+corr_df <- for_corr[vars_corr]
+
+cor_matrix <- cor(corr_df, use = "complete.obs")
+subscribed_cor <- cor_matrix[, "subscribed", drop = FALSE]
+subscribed_cor <- subscribed_cor[order(abs(subscribed_cor[,1]), decreasing = TRUE), , drop = FALSE]
+
+cor_df <- data.frame(
+  variable = rownames(subscribed_cor),
+  correlation = subscribed_cor[,1]
+)
+
+ggplot(cor_df, aes(x = reorder(variable, correlation), y = correlation)) +
+  geom_bar(stat = "identity", fill = base_palette[3]) +
+  coord_flip() +
+  labs(title = "Correlation with Subscribed", x = "Variable", y = "Correlation")
+```
+
+### PCA
+
+```{r, final-pca, out.width="100%"}
+for_pca <- bank
+for_pca <- bank[sapply(data, is.numeric)]
+
+pca <- prcomp(for_pca, scale. = TRUE)
+autoplot(pca, data = bank, colour = 'subscribed', loadings = TRUE, loadings.label = TRUE) +
+  labs(title = "PCA")
+```
+
+```{r, final-pca-loadings}
+loadings <- as.data.frame(pca$rotation)
+loadings$variable <- rownames(loadings)
+
+loadings$PC1.ABS <- abs(loadings$PC1)
+loadings$PC2.ABS <- abs(loadings$PC2)
+
+top_pc1 <- loadings[order(-loadings$PC1.ABS), c("variable", "PC1")][1:7, ]
+top_pc2 <- loadings[order(-loadings$PC2.ABS), c("variable", "PC2")][1:7, ]
+
+top_combined <- data.frame(
+  PC1_Variable = top_pc1$variable,
+  PC1_Loading = round(top_pc1$PC1, 3),
+  PC2_Variable = top_pc2$variable,
+  PC2_Loading = round(top_pc2$PC2, 3)
+)
+
+top_combined
+```
+
+<div>
+
+Principal Component Analysis (PCA) on the numeric variables revealed that pdays and previous contributed most to the first principal component (PC1), capturing variability related to past campaign exposure. The second component (PC2) was primarily influenced by campaign, day, and negatively by duration, reflecting variation in campaign intensity and contact timing.
+
+We can interpret the components as:
+
+-   PC1: Differences in past contact history, primarily driven by pdays and previous.
+-   PC2: Differences in campaign intensity and call timing, shaped by campaign, day, and negatively by duration.
+
+</div>
+
+```{r, final-pca-eigen}
+eigenvals <- pca$sdev^2
+plot(eigenvals / sum(eigenvals), type = "l", main = "Scree Plot", ylab = "Prop. Var. Explained", xlab = "PC #", ylim = c(0, 1))
+cumulative.prop <- cumsum(eigenvals / sum(eigenvals))
+lines(cumulative.prop, lty = 2)
+```
+
+```{r, final-pca-eigen-explain}
+eigenvals <- pca$sdev^2
+prop_var <- eigenvals / sum(eigenvals)
+cum_var <- cumsum(prop_var)
+pc_table <- data.frame(
+  PC = paste0("PC", 1:length(prop_var)),
+  "Variance Explained" = round(prop_var, 4),
+  "Cumulative Variance" = round(cum_var, 4)
+)
+
+pc_table
+```
+
+```{r, final-pca-scores, out.width="100%"}
+pca_scores <- as.data.frame(pca$x)
+pca_scores$subscribed <- bank$subscribed
+
+plot_ly(
+  data = pca_scores,
+  x = ~PC1, y = ~PC2, z = ~PC3,
+  color = ~subscribed,
+  colors = c(base_palette[3], "skyblue"),
+  type = "scatter3d",
+  mode = "markers"
+)
+```
+
+<div>
+
+It appears that we're missing a significant portion of the variance by focusing only on the numeric variables. PC1 and PC2 explain the most variation among these, but even after adding PC3, we don’t observe meaningful separation between subscription outcomes. This suggests that additional structure — possibly critical for understanding or predicting subscribed — may lie in the categorical variables, which were not included in this PCA.
+
+</div>
+
+
+## Logistic Regression
+
+### Run GLM in each predictor
+
+Let's understand a bit how the numerals contribute to explain the subscription
+
+```{r, final-glm-all-num}
+for_glm <- bank
+for_glm$subscribed <- ifelse(for_glm$subscribed == "yes", 1, 0)
+
+all_num_additive <- glm(subscribed ~ duration + pdays + previous + campaign + balance + age + day, data = for_glm, family = binomial)
+summary(all_num_additive)
+```
+
+#### Plot Logistic on Numericals
+
+```{r, final-glm-all}
+tidy(all_num_additive, conf.int = TRUE) |>
+  filter(term != "(Intercept)") |>
+  ggplot(aes(x = reorder(term, estimate), y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1) +
+  coord_flip() +
+  labs(title = "Logistic Regression Coefficients",
+       y = "Estimate (log-odds)", x = "Variable")
+```
+
+#### Look for signals in categorical
+
+Modeling with all categoricals might tell some story
+
+```{r, final-glm-all-cat}
+bank_cat <- bank
+cat_model_vars <- setdiff(categorical_vars, "subscribed")
+model_glm_cat <- as.formula(paste("subscribed ~", paste(cat_model_vars, collapse = " + ")))
+
+glm_cats <- glm(model_glm_cat, data = bank_cat, family = binomial)
+summary(glm_cats)
+```
+
+##### Reference levels
+
+```{r, final-glm-all-cat-ref}
+X_cat <- model.matrix(model_glm_cat, data = bank_cat)
+
+reference_lvls <- data.frame(
+  Variable = cat_model_vars,
+  Reference = sapply(bank_cat[cat_model_vars], function(x) levels(x)[1])
+) |> tibble::as_tibble()
+
+
+reference_lvls
+```
+
+##### Odds Ratio
+
+```{r, final-glm-odds}
+odds_ratios <- data.frame(
+  Variable = names(coef(glm_cats)),
+  Odds_Ratio = exp(coef(glm_cats))
+) |> dplyr::mutate(Effect = paste0(round((Odds_Ratio - 1) * 100, 1), "%")) |>
+  dplyr::mutate(Odds_Ratio = round(Odds_Ratio, 3)) |>
+  dplyr::arrange(desc(Odds_Ratio)) |>
+  tibble::as_tibble()
+
+odds_ratios
+```
+
+<div>
+
+We can see from the categorical only variables that:
+
+-   Month of contact has a strong influence: campaigns conducted in March, October, and September significantly increased subscription odds, while those in January and August showed markedly lower performance.
+-   Job type and education level also shape likelihood: customers who are retired or students, and those with tertiary education, are notably more likely to subscribe.
+-   Additionally, having an existing loan appears to negatively impact subscription odds, suggesting financial burden may reduce campaign receptiveness.
+
+</div>
+
+| Variable | Visual Pattern? | Clear % Difference? | Keep? |
+|-----------------|-----------------|--------------------|-------------------|
+| contact | yes | yes (cellular \> unknown) | yes |
+| loan | yes | yes (loan = less likely) | yes |
+| housing | yes | yes (housing = likely) | yes |
+| default | maybe | some | maybe |
+| education | yes | yes (tertiary increases) | yes |
+| poutcome | strong | yes (success = very high) | yes |
+| marital | maybe | some separation | maybe |
+| job | mixed | a few clear signals | maybe (group rare levels) |
+
+<div>
+
+Carefully look at poutcome as we do not know what drives from previous mkt approach, and if the customer is showing an affinity to long term deposit, maybe is increasing the current deposit. Default sounds like a good story, I tried swapping ref with not much difference.
+
+</div>
+
+### Feature Selection (By EDA)
+
+We are having very conflicting results based on the multiple explorations on numerical, that is telling us, that we need categorical variables to play a role in the explainability.
+
+We think that cyclical encoding for month as we see some patterns on specific months could help the model to explain better as seasonality seems to have some effect.
+
+| Variable | Type | Reason for Inclusion |
+|---------------|---------------|------------------------------------------|
+| duration | Numerical | Strongest univariate predictor; higher durations consistently increase subscription odds |
+| pdays | Numerical | Captures time since last contact; reflects engagement recency |
+| previous | Numerical | Reflects past campaign success; useful but may be redundant with pdays/campaign |
+| balance | Numerical | Indicates client financial status; moderate predictive signal |
+| campaign | Numerical | Current campaign intensity; negative association suggests fatigue with repeated contact |
+| month_sin | Numerical | Cyclical encoding of month (seasonality); preserves circular month structure |
+| month_cos | Numerical | Complement to month_sin; together capture monthly cyclic patterns |
+| contact | Categorical | Clear visual and statistical difference; contact method affects likelihood to subscribe |
+| loan | Categorical | Customers with loans are less likely to subscribe; simple and interpretable |
+| education | Categorical | Higher education levels (tertiary) correlate with higher subscription odds |
+| marital | Categorical | Some variation observed; potentially useful with clear reference level |
+| job | Categorical | Certain job roles (retired, student) show increased subscription; use with level grouping |
+
+### Prepare model
+
+Will do the cyclical encoding for month and dummy variables (as they are factors GLM will dummy them)
+
+```{r, final-glm-cyclical}
+candidate_data <- bank
+candidate_data$month_num <- as.numeric(factor(candidate_data$month, levels = c(
+  "jan", "feb", "mar", "apr", "may", "jun",
+  "jul", "aug", "sep", "oct", "nov", "dec"
+)))
+
+candidate_data$month_sin <- sin(2 * pi * candidate_data$month_num / 12)
+candidate_data$month_cos <- cos(2 * pi * candidate_data$month_num / 12)
+
+
+candidate_data <- candidate_data |> dplyr::select(-month)
+head(candidate_data)
+```
+
+```{r, final-glm-candidate}
+split_rate <- 0.7
+split <- sample(1:nrow(candidate_data), split_rate * nrow(candidate_data))
+train_data <- candidate_data[split, ]
+test_data  <- candidate_data[-split, ]
+
+#num_feat <- c("duration", "poutcome", "pdays", "balance", "default", "housing", "campaign", "month_sin", "month_cos")
+num_feat <- c("duration", "balance", "campaign", "month_sin", "month_cos")
+cat_feat <- c("contact", "loan", "education", "marital", "job", "poutcome", "housing")
+
+features <- c(num_feat, cat_feat)
+candidate_model <- as.formula(paste("subscribed ~", paste(features, collapse = " + ")))
+
+```
+
+### GLM 
+```{r}
+candidate_fit <- glm(candidate_model, data = candidate_data, family = binomial)
+summary(candidate_fit)
+exp(cbind(OR = coef(candidate_fit), confint(candidate_fit)))
+```
+
+```{r, final-glm-candidate-pred}
+threshold <- 0.25
+candidate_fit <- glm(candidate_model, data = train_data, family = binomial)
+summary(candidate_fit)
+exp(cbind(OR = coef(candidate_fit), confint(candidate_fit)))
+
+glm_pred <- predict(candidate_fit, newdata = test_data, type = "response")
+
+model_levels <- levels(candidate_data$subscribed)
+pred_class <- factor(ifelse(glm_pred > threshold, "yes", "no"), levels = model_levels)
+glm_actual <- factor(test_data$subscribed, levels = model_levels)
+
+confusionMatrix(pred_class, glm_actual, positive = "yes")
+```
+
+#### Tune thresholds
+
+```{r, final-glm-candidate-thr, out.width="100%"}
+thresholds <- seq(0.1, 0.9, by = 0.01)
+
+metrics_df <- purrr::map_dfr(thresholds, function(thresh) {
+  pred_class <- factor(ifelse(glm_pred > thresh, "yes", "no"), levels = c("no", "yes"))
+  
+  tibble(
+    threshold = thresh,
+    precision = yardstick::precision_vec(truth = glm_actual, estimate = pred_class, event_level = "second"),
+    recall = yardstick::recall_vec(truth = glm_actual, estimate = pred_class, event_level = "second"),
+    f1 = yardstick::f_meas_vec(truth = glm_actual, estimate = pred_class, event_level = "second")
+  )
+})
+
+ggplot(metrics_df, aes(x = threshold)) +
+  geom_line(aes(y = f1), color = base_palette[1]) +
+  geom_line(aes(y = precision), color = base_palette[2]) +
+  geom_line(aes(y = recall), color = base_palette[3]) +
+  labs(title = "Threshold Tuning", y = "Metric", x = "Threshold")
+```
+
+#### Misclassification spot-check
+
+```{r, final-glm-candidate-miss-class, out.width="100%"}
+test_data_aug <- test_data %>%
+  dplyr::mutate(
+    pred_prob = glm_pred,
+    pred_class = factor(ifelse(glm_pred > threshold, "yes", "no"), levels = c("no", "yes")),
+    subscribed = factor(subscribed, levels = c("no", "yes")),
+    result = case_when(
+      subscribed == "yes" & pred_class == "yes" ~ "TP",
+      subscribed == "no" & pred_class == "yes" ~ "FP",
+      subscribed == "yes" & pred_class == "no" ~ "FN",
+      subscribed == "no" & pred_class == "no" ~ "TN"
+    )
+  )
+
+ggplot(test_data_aug, aes(x = duration, y = balance, color = result)) +
+  geom_point(alpha = 0.4) +
+  labs(title = "False Positives vs. True Positives",
+       subtitle = paste("Threshold:", threshold),
+       color = "Prediction Outcome")
+```
+
+```{r, final-glm-candidate-recall-curve}
+test_data$subscribed <- factor(test_data$subscribed, levels = c("no", "yes"))
+
+pr_df <- tibble(
+  subscribed = test_data$subscribed,
+  .pred_yes = glm_pred
+)
+
+pr_curve(pr_df, truth = subscribed, .pred_yes) %>%
+  autoplot() +
+  labs(
+    title = "Precision-Recall Curve",
+    subtitle = "Probability thresholds for predicting 'yes'"
+  )
+```
+
+## Prediction - Objective 2
+
+
+### Quick inspection for potential complexity
+
+```{r, final-complex-plt-1, out.width="100%"}
+bank_loess <- bank
+bank_loess$subscribed <- ifelse(bank_loess$subscribed == "yes", 1, 0)
+plt_numeric_vars <- setdiff(numeric_vars, c())
+
+plots <- lapply(plt_numeric_vars, function(var) {
+  ggplot(bank_loess, aes_string(x = var, y = "subscribed", colour = var)) +
+    geom_point() +
+    geom_smooth(method = "loess", se = FALSE, size = 1, span = 1.5) +
+    ylim(-.2, 1.2) +
+    labs(title = paste("Subscription vs", var), y = "Subscription Rate", x = var)
+})
+grid.arrange(grobs = plots, ncol = 3)
+```
+
+| **Variable**   | **Shape**                         | **Interpretation**                                                                  | **Suggestion**                                              |
+|----------------|-----------------------------------|--------------------------------------------------------------------------------------|--------------------------------------------------------------|
+| `age`          | U-shape → increasing              | Older clients tend to subscribe more; age shows a non-linear effect                 | Include `age^2`                                              |
+| `balance`      | Inverted U-shape                  | Clients with mid-range balances are more likely to subscribe                        | Use `balance + balance^2`                                   |
+| `duration`     | Logistic-like rise then plateau   | Longer calls are associated with higher subscription rates, with signs of saturation | Consider `log(duration + 1)` or natural spline              |
+| `campaign`     | Shallow U-shape                   | Additional contacts may reduce effectiveness after a point                          | Keep as linear or bin into tiers                            |
+| `pdays`        | Flat with mild positive curvature | Values like -1 dominate; higher values show a weak increasing trend                 | Cap at 300 or bin; optionally include `pdays == -1` indicator |
+| `previous`     | Curved rise then decline          | Moderate prior contact increases success; too many may reduce effectiveness         | Use `previous + previous^2` or `log(previous + 1)`          |
+
+## Prepare Complexity
+
+### Look for some interactions
+
+```{r, final-complex-interactions, out.width="100%"}
+#'  By domain knowledge we explore couple interactions.
+#'  - duration × poutcome: Duration and previous outcome can drive success
+#'  - duration × contact: Communication channel can affect duration of calls
+#'  - job × education: Job and education can have strong relationships
+#'  - housing × loan: Debt-free can drive decisions regarding financial risks
+
+inter_data <- candidate_data
+inter_data$subscribed <- ifelse(inter_data$subscribed == "yes", 1, 0)
+
+iner_job_data <- inter_data |>
+  group_by(job, education) |>
+  summarise(subscribe_rate = mean(subscribed), .groups = "drop")
+
+housing_loan_data <- inter_data %>%
+  group_by(housing, loan) %>%
+  summarise(rate = mean(subscribed), .groups = "drop")
+
+
+plt_outcome <- ggplot(inter_data, aes(y = subscribed, x = duration, colour = poutcome)) +
+  geom_point() +
+  labs(
+    title = "Subscription Rate by Duration × Outcome",
+  ) +
+  geom_smooth(method = "loess", size = 1, span = .5) +
+  ylim(-.2, 1)
+
+
+plt_dur_ct <- ggplot(inter_data, aes(y = subscribed, x = duration, colour = contact)) +
+  geom_point() +
+  labs(
+    title = "Subscription Rate by Duration × Contact",
+  ) +
+  geom_smooth(method = "loess", size = 1, span = .5) +
+  ylim(-.2, 1)
+
+
+plt_job <- ggplot(iner_job_data, aes(x = education, y = job, fill = subscribe_rate)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = base_palette[3], name = "Subscription Rate") +
+  labs(
+    title = "Subscription Rate by Job × Education",
+    x = "Education Level", y = "Job"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plt_house_loan <- ggplot(housing_loan_data, aes(x = housing, y = rate, fill = loan)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Subscription Rate by Housing × Loan",
+    x = "Housing Loan", y = "Subscription Rate"
+  )
+
+(plt_outcome + plt_dur_ct) / (plt_job + plt_house_loan)
+```
+
+```{r, final-complex-feat-selection-setup}
+#' Local Variables
+#' -  Setting threshold for all models - might need adjustment for each; but the goal is to compare in a fair ground
+#' -  Train Control for all models, same cross validation. Can be set individually for each model
+#' -  Set Reference Levels
+
+threshold <- 0.25
+model_levels <- levels(candidate_data$subscribed)
+
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 1,
+  classProbs = TRUE,
+  summaryFunction = mnLogLoss
+)
+
+drop_num <- c("pdays")
+drop_cat <- c("month", "subscribed")
+no_transform <- c("month_sin", "month_cos", "day")
+
+numeric_clean <- setdiff(numeric_vars, drop_num)
+categorical_clean <- setdiff(categorical_vars, drop_cat)
+
+existing_vars <- names(candidate_data)
+direct_numeric <- intersect(setdiff(no_transform, drop_num), existing_vars)
+
+# For GLM/LDA models
+num_poly <- setdiff(numeric_clean, no_transform)
+poly_terms <- paste0("poly(", num_poly, ", 2, raw = TRUE)")
+
+interaction_terms <- c(
+  "poly(duration, 2, raw = TRUE):poutcome",
+  "poly(duration, 2, raw = TRUE):contact",
+  "job:education",
+  "housing:loan"
+)
+
+formula_terms_full <- c(poly_terms, direct_numeric, categorical_clean, interaction_terms)
+candidate_formula_string <- paste("subscribed ~", paste(formula_terms_full, collapse = " + "))
+candidate_model <- as.formula(candidate_formula_string)
+
+# Random Forest version
+formula_terms_rf <- intersect(c(numeric_clean, direct_numeric, categorical_clean), existing_vars)
+rf_formula_string <- paste("subscribed ~", paste(formula_terms_rf, collapse = " + "))
+rf_candidate_model <- as.formula(rf_formula_string)
+
+candidate_model
+rf_candidate_model
+```
+
+### Feature Selection
+
+```{r, final-complex-feat-selection-step}
+step_model <- stepAIC(
+  glm(candidate_model, data = train_data, family = binomial),
+  scope = list(lower = ~ month_cos, upper = candidate_model),
+  direction = "both"
+)
+
+selected_formula <- formula(step_model)
+summary(step_model)
+```
+
+### Lasso Feature selection
+```{r, final-comple-feat-selection-lasso}
+
+
+train_model_num <- train_data
+train_model_num$subscribed.num <- ifelse(train_data$subscribed=="yes",1,0)
+
+
+x = model.matrix(subscribed.num ~ poly(age, 2, raw = TRUE) + poly(balance, 2, raw = TRUE) + 
+    poly(duration, 2, raw = TRUE) + poly(campaign, 2, raw = TRUE) + 
+    poly(previous, 2, raw = TRUE) + month_sin + month_cos + day + 
+    job + marital + education + default + housing + loan + contact + 
+    poutcome + poly(duration, 2, raw = TRUE):poutcome + poly(duration, 
+    2, raw = TRUE):contact + job:education + housing:loan, train_model_num)[,-1]
+y= train_model_num$subscribed.num
+
+
+set.seed(1234)
+
+grid=10^seq(10,-2, Length=100)
+lasso.mod = glmnet(x,y,alpha=1, lambda=grid)
+
+cv.out=cv.glmnet(x,y,alpha=1)
+plot(cv.out)
+
+bestlambda <- cv.out$lambda.1se
+coef(cv.out,s=bestlambda)
+```
+
+
+### Helper Functions
+
+```{r, final-complex-model-helpers}
+#' Simple Functions to avoid repeating a lot
+#' Compute RMSE, LOGLOSS, and a Readeable Table for metrics
+threshold <- 0.25
+
+actual_preds <- factor(test_data$subscribed, levels = model_levels)
+
+custom.rmse <- function(predicted, actual) {
+  sqrt(mean((predicted - ifelse(actual == "yes", 1, 0))^2))
+}
+
+custom.logloss <- function(probs, actual, eps = 1e-15) {
+  probs <- pmin(pmax(probs, eps), 1 - eps)
+  actual_binary <- ifelse(actual == "yes", 1, 0)
+  -mean(actual_binary * log(probs) + (1 - actual_binary) * log(1 - probs))
+}
+
+custom.results <- function(model_fit) {
+  probs <- predict(model_fit, newdata = test_data, type = "prob")[, "yes"]
+  classification <- factor(ifelse(probs > threshold, "yes", "no"), levels = model_levels)
+  cm <- confusionMatrix(data = classification, reference = actual_preds, positive = "yes")
+  
+  list(
+    Probabilities = probs,
+    #Classification = classification,
+    ConfusionMatrix = cm
+  )
+}
+
+custom.metrics <- function(cm, fit, roc, probs) {
+  sensitivity <- cm$byClass["Sensitivity"]
+  ppv <- cm$byClass["Pos Pred Value"]
+  f1_score <- if ((sensitivity + ppv) > 0) {
+    2 * ((sensitivity * ppv) / (sensitivity + ppv))
+  } else {
+    NA
+  }
+
+  log_loss <- custom.logloss(probs, actual_preds)
+  rmse <- custom.rmse(probs, actual_preds)
+
+  aic <- NA
+  if (!is.null(fit$finalModel) && "aic" %in% names(fit$finalModel)) {
+    aic <- fit$finalModel$aic
+  } else if (inherits(fit$finalModel, "glm")) {
+    aic <- AIC(fit$finalModel)
+  }
+
+  data.frame(
+    RMSE        = rmse,
+    AIC         = aic,
+    Accuracy    = cm$overall["Accuracy"],
+    Sensitivity = sensitivity,
+    Specificity = cm$byClass["Specificity"],
+    PPV         = ppv,
+    NPV         = cm$byClass["Neg Pred Value"],
+    Prevalence  = cm$byClass["Prevalence"],
+    AUROC       = auc(roc),
+    LogLoss     = log_loss,
+    F1          = f1_score
+  )
+}
+```
+
+## Complex Logistic Regresion (GLM)
+
+```{r, final-complex-model-glm}
+set.seed(42)
+glm_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "glm",
+  family = "binomial",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+glm_fit_selected <- train(
+  selected_formula,
+  data = train_data,
+  method = "glm",
+  family = "binomial",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+glm_results <- custom.results(glm_fit)
+glm_results_selected <- custom.results(glm_fit_selected)
+```
+
+## LDA Model
+
+```{r, final-complex-model-lda}
+set.seed(42)
+lda_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "lda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+lda_fit_selected <- train(
+  selected_formula,
+  data = train_data,
+  method = "lda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+lda_results <- custom.results(lda_fit)
+lda_results_selected <- custom.results(lda_fit_selected)
+```
+
+### QDA model
+
+```{r, final-model-QDA}
+qda_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "qda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+qda_fit_selected <- train(
+  selected_formula,
+  data = train_data,
+  method = "qda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+qda_results <- custom.results(qda_fit)
+qda_results_selected <- custom.results(qda_fit_selected)
+
+```
+
+## KNN
+
+```{r, final-model-knn}
+knn_fit <- train(
+  rf_candidate_model,
+  data = train_data,
+  method = "knn",
+  preProcess = c("center", "scale"),
+  trControl = fitControl,
+  tuneLength = 2
+)
+
+knn_results <- custom.results(knn_fit)
+```
+
+## Random Forest
+
+```{r, final-model-random-forest}
+set.seed(42)
+rf_fit <- train(
+  rf_candidate_model,
+  data = train_data,
+  method = "ranger",
+  trControl = fitControl,
+  metric = "logLoss",
+  tuneLength = 1
+)
+
+rf_results <- custom.results(rf_fit)
+```
+
+## Performance Metrics
+
+```{r, final-model-metrics}
+roc_lda <- roc(actual_preds, lda_results$Probabilities, levels = model_levels, direction = "<")
+roc_qda <- roc(actual_preds, qda_results$Probabilities, levels = model_levels, direction = "<")
+roc_glm <- roc(actual_preds, glm_results$Probabilities, levels = model_levels, direction = "<")
+roc_rf <- roc(actual_preds, rf_results$Probabilities, levels = model_levels, direction = "<")
+roc_knn <- roc(actual_preds, knn_results$Probabilities, levels = model_levels, direction = "<")
+
+#' Hybrid Selected ROC
+plot(roc_lda, col = base_palette[1], lwd = 2, main = "ROC Curve: LDA vs Logistic vs Random Forest")
+lines(roc_glm, col = base_palette[2], lwd = 2)
+lines(roc_rf, col = base_palette[3], lwd = 2)
+lines(roc_knn, col = base_palette[4], lwd = 2)
+lines(roc_qda, col = base_palette[5], lwd = 2)
+
+legend("bottomright",
+  legend = c(
+    paste("LDA           (AUC =", round(auc(roc_lda), 3), ")"),
+    paste("Logistic      (AUC =", round(auc(roc_glm), 3), ")"),
+    paste("Random Forest (AUC =", round(auc(roc_rf), 3), ")"),
+    paste("KNN           (AUC =", round(auc(roc_knn), 3), ")"),
+    paste("QDA           (AUC =", round(auc(roc_qda), 3), ")")
+  ),
+  col = base_palette[1:5],
+  lwd = 4
+)
+```
+
+#### Feature Selected ROC
+
+```{r, final-model-metrics-fs}
+#' Feature Selected ROC
+roc_lda_selected <- roc(actual_preds, lda_results_selected$Probabilities, levels = model_levels, direction = "<")
+roc_glm_selected <- roc(actual_preds, glm_results_selected$Probabilities, levels = model_levels, direction = "<")
+roc_qda_selected <- roc(actual_preds, qda_results_selected$Probabilities, levels = model_levels, direction = "<")
+
+#' Feature Selected ROC
+plot(roc_lda_selected, col = base_palette[7], lwd = 2, main = "ROC Curve: LDA vs Logistic - (Feature Selected)")
+lines(roc_glm_selected, col = base_palette[8], lwd = 2)
+lines(roc_qda_selected, col = base_palette[9], lwd = 2)
+
+legend("bottomright",
+  legend = c(
+    paste("LDA           (AUC =", round(auc(roc_lda_selected), 3), ")"),
+    paste("Logistic      (AUC =", round(auc(roc_glm_selected), 3), ")"),
+    paste("QDA           (AUC =", round(auc(roc_qda_selected), 3), ")")
+  ),
+  col = base_palette[7:9],
+  lwd = 4
+)
+```
+
+### Metrics Table Comparision
+
+```{r, final-model-comparision}
+results_table <- rbind(
+  LDA = custom.metrics(lda_results$ConfusionMatrix, lda_fit, roc_lda, lda_results$Probabilities),
+  LDA.FeatureSelected = custom.metrics(lda_results_selected$ConfusionMatrix, lda_fit_selected, roc_lda_selected, lda_results_selected$Probabilities),
+  QDA = custom.metrics(qda_results$ConfusionMatri, qda_fit, roc_qda, qda_results$Probabilities),
+  QDA.FeatureSelected = custom.metrics(qda_results_selected$ConfusionMatri, qda_fit_selected, roc_qda_selected, qda_results_selected$Probabilities),
+  Logistic = custom.metrics(glm_results$ConfusionMatrix, glm_fit, roc_glm, glm_results$Probabilities),
+  Logistic.FeatureSelected = custom.metrics(glm_results_selected$ConfusionMatrix, glm_fit_selected, roc_glm_selected, glm_results_selected$Probabilities),
+  RandomForest = custom.metrics(rf_results$ConfusionMatrix, rf_fit, roc_rf, rf_results$Probabilities),
+  kNN = custom.metrics(knn_results$ConfusionMatrix, knn_fit, roc_knn, knn_results$Probabilities)
+)
+round(data.frame(t(results_table)), 4)
+```
