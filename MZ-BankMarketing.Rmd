@@ -1,6 +1,9 @@
 ---
 title: "Bank Marketing - Subscription"
-author: "Miguel Zavala"
+author: 
+  - "Miguel Zavala"
+  - "Hayoung Cheon"
+  - "Megan Huy"
 output:
   html_document:
     df_print: paged
@@ -20,6 +23,7 @@ knitr::opts_chunk$set(
   message = TRUE,
   fig.align = "center"
 )
+
 ```
 
 ```{r, final-install-packages, include=FALSE}
@@ -559,7 +563,6 @@ odd_ratio_significant <- odd_ci[significant, ]
 
 odd_ratio_significant <- cbind(odd_ratio_significant, "p-value" = round(pvals[significant], 4))
 
-# Print
 print(odd_ratio_significant)
 summary_model
 ```
@@ -568,7 +571,7 @@ summary_model
 #### Effects Plot
 
 ```{r, final-glm-summary-effects-plot}
-plot_model(int, type = "pred", terms = c("campaign [all]", "poutcome", "job"))
+plot_model(int, type = "pred", terms = c("campaign [all]", "poutcome"))
 ```
 
 #### Tune thresholds
@@ -638,7 +641,7 @@ pr_curve(pr_df, truth = subscribed, .pred_yes) %>%
 
 ### Quick inspection for potential complexity
 
-```{r, final-complex-plt-1, out.width="100%"}
+```{r, final-complex-plt-1, out.width="100%", message=FALSE, warning=FALSE}
 bank_loess <- bank
 bank_loess$subscribed <- ifelse(bank_loess$subscribed == "yes", 1, 0)
 plt_numeric_vars <- setdiff(numeric_vars, c())
@@ -722,6 +725,25 @@ plt_house_loan <- ggplot(housing_loan_data, aes(x = housing, y = rate, fill = lo
 
 (plt_outcome + plt_dur_ct) / (plt_job + plt_house_loan)
 ```
+### Correlations
+
+```{r, final-complex-interactions-corr, out.width="100%", message=FALSE}
+num_vars <- candidate_data[c("age", "balance", "duration", "campaign", "previous", "month_sin", "month_cos", "pdays", "day")]
+
+train_model_num <- candidate_data
+train_model_num$subscribed <- ifelse(train_model_num$subscribed == "yes", 1, 0)
+
+plot_data <- data.frame(num_vars, subscribed = factor(train_model_num$subscribed))
+
+ggpairs(plot_data,
+  aes(color = subscribed, alpha = 0.5),
+  upper = list(continuous = wrap("cor", size = 3)),
+  lower = list(continuous = wrap("points", alpha = 0.4, size = 0.5)),
+  diag = list(continuous = wrap("densityDiag"))
+)
+```
+
+### Setup Fit Control
 
 ```{r, final-complex-feat-selection-setup}
 #' Local Variables
@@ -735,7 +757,7 @@ model_levels <- levels(candidate_data$subscribed)
 fitControl <- trainControl(
   method = "repeatedcv",
   number = 5,
-  repeats = 1,
+  repeats = 5,
   classProbs = TRUE,
   summaryFunction = mnLogLoss
 )
@@ -903,6 +925,28 @@ lda_results <- custom.results(lda_fit)
 lda_results_selected <- custom.results(lda_fit_selected)
 ```
 
+## QDA
+
+```{r}
+qda_fit <- train(
+  candidate_model,
+  data = train_data,
+  method = "qda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+qda_fit_selected <- train(
+  selected_formula,
+  data = train_data,
+  method = "qda",
+  trControl = fitControl,
+  metric = "logLoss"
+)
+
+qda_results <- custom.results(qda_fit)
+qda_results_selected <- custom.results(qda_fit_selected)
+```
 
 ## KNN
 
@@ -939,6 +983,7 @@ rf_results <- custom.results(rf_fit)
 
 ```{r, final-model-metrics}
 roc_lda <- roc(actual_preds, lda_results$Probabilities, levels = model_levels, direction = "<")
+roc_qda <- roc(actual_preds, qda_results$Probabilities, levels = model_levels, direction = "<")
 roc_glm <- roc(actual_preds, glm_results$Probabilities, levels = model_levels, direction = "<")
 roc_rf <- roc(actual_preds, rf_results$Probabilities, levels = model_levels, direction = "<")
 roc_knn <- roc(actual_preds, knn_results$Probabilities, levels = model_levels, direction = "<")
@@ -948,15 +993,17 @@ plot(roc_lda, col = base_palette[1], lwd = 2, main = "ROC Curve: LDA vs Logistic
 lines(roc_glm, col = base_palette[2], lwd = 2)
 lines(roc_rf, col = base_palette[3], lwd = 2)
 lines(roc_knn, col = base_palette[4], lwd = 2)
+lines(roc_qda, col = base_palette[5], lwd = 2)
 
 legend("bottomright",
   legend = c(
     paste("LDA           (AUC =", round(auc(roc_lda), 3), ")"),
     paste("Logistic      (AUC =", round(auc(roc_glm), 3), ")"),
     paste("Random Forest (AUC =", round(auc(roc_rf), 3), ")"),
-    paste("KNN           (AUC =", round(auc(roc_knn), 3), ")")
+    paste("KNN           (AUC =", round(auc(roc_knn), 3), ")"),
+    paste("QDA           (AUC =", round(auc(roc_qda), 3), ")")
   ),
-  col = base_palette[1:4],
+  col = base_palette[1:5],
   lwd = 4
 )
 ```
@@ -967,27 +1014,32 @@ legend("bottomright",
 #' Feature Selected ROC
 roc_lda_selected <- roc(actual_preds, lda_results_selected$Probabilities, levels = model_levels, direction = "<")
 roc_glm_selected <- roc(actual_preds, glm_results_selected$Probabilities, levels = model_levels, direction = "<")
+roc_qda_selected <- roc(actual_preds, qda_results_selected$Probabilities, levels = model_levels, direction = "<")
 
 #' Feature Selected ROC
 plot(roc_lda_selected, col = base_palette[7], lwd = 2, main = "ROC Curve: LDA vs Logistic - (Feature Selected)")
 lines(roc_glm_selected, col = base_palette[8], lwd = 2)
+lines(roc_qda_selected, col = base_palette[9], lwd = 2)
 
 legend("bottomright",
   legend = c(
     paste("LDA           (AUC =", round(auc(roc_lda_selected), 3), ")"),
-    paste("Logistic      (AUC =", round(auc(roc_glm_selected), 3), ")")
+    paste("Logistic      (AUC =", round(auc(roc_glm_selected), 3), ")"),
+    paste("QDA           (AUC =", round(auc(roc_qda_selected), 3), ")")
   ),
-  col = base_palette[7:8],
+  col = base_palette[7:9],
   lwd = 4
 )
 ```
 
 ### Metrics Table Comparision
 
-```{r, final-model-comparision}
+```{r, final-model-comparision, rows.print=20, cols.print=20}
 results_table <- rbind(
   LDA = custom.metrics(lda_results$ConfusionMatrix, lda_fit, roc_lda, lda_results$Probabilities),
   LDA.FeatureSelected = custom.metrics(lda_results_selected$ConfusionMatrix, lda_fit_selected, roc_lda_selected, lda_results_selected$Probabilities),
+  QDA = custom.metrics(qda_results$ConfusionMatri, qda_fit, roc_qda, qda_results$Probabilities),
+  QDA.FeatureSelected = custom.metrics(qda_results_selected$ConfusionMatri, qda_fit_selected, roc_qda_selected, qda_results_selected$Probabilities),
   Logistic = custom.metrics(glm_results$ConfusionMatrix, glm_fit, roc_glm, glm_results$Probabilities),
   Logistic.FeatureSelected = custom.metrics(glm_results_selected$ConfusionMatrix, glm_fit_selected, roc_glm_selected, glm_results_selected$Probabilities),
   RandomForest = custom.metrics(rf_results$ConfusionMatrix, rf_fit, roc_rf, rf_results$Probabilities),
@@ -995,3 +1047,4 @@ results_table <- rbind(
 )
 round(data.frame(t(results_table)), 4)
 ```
+
