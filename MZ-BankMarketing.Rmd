@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
 
 ```{r, final-install-packages, include=FALSE}
 required_packages <- c(
-  "ggplot2", "tidyverse", "corrplot", "visdat", "GGally", "car", "reshape2", "MASS",
+  "ggplot2", "tidyverse", "corrplot", "visdat", "GGally", "car", "reshape2", "MASS", "sjPlot",
   "ggcorrplot", "glmnet", "caret", "RColorBrewer", "plotly", "broom", "yardstick", "gridGraphics",
   "dplyr", "grid", "gridExtra", "DT", "tidyr", "patchwork", "ggfortify", "factoextra", "pROC"
 )
@@ -542,8 +542,10 @@ month_table <- month_df %>%
 table_grob <- gridExtra::tableGrob(month_table, rows = NULL)
 plot_month + patchwork::wrap_elements(table_grob) + plot_layout(widths = c(2, 1))
 ```
-```{r}
 
+#### Summary
+
+```{r, final-glm-summary-odds-ratio}
 summary_model <- summary(int)
 coefs <- summary_model$coefficients
 pvals <- coefs[, 4]
@@ -560,6 +562,13 @@ odd_ratio_significant <- cbind(odd_ratio_significant, "p-value" = round(pvals[si
 # Print
 print(odd_ratio_significant)
 summary_model
+```
+
+
+#### Effects Plot
+
+```{r, final-glm-summary-effects-plot}
+plot_model(int, type = "pred", terms = c("campaign [all]", "poutcome", "job"))
 ```
 
 #### Tune thresholds
